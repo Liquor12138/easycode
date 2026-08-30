@@ -89,17 +89,28 @@ SYSTEM_PROMPT = """你是一个编程智能体（Coding Agent），能够通过�
 # Agent 核心类
 # ============================================================
 
+# 需要用户确认的文件修改工具
+_FILE_MODIFY_TOOLS = {"write_file", "search_replace"}
+
+
 class CodingAgent:
     """
     编程智能体：封装对话历史管理、模型调用、工具执行和循环控制。
     不使用任何 Agent 框架，所有逻辑自行实现。
     """
 
-    def __init__(self, working_dir: str, on_step: Optional[Callable] = None):
+    def __init__(
+        self,
+        working_dir: str,
+        on_step: Optional[Callable] = None,
+        on_confirm: Optional[Callable] = None,
+    ):
         """
         Args:
             working_dir: Agent 的工作目录（沙箱根目录）
             on_step:     每完成一步后的回调函数，接收 StepLog，用于实时推送
+            on_confirm:  文件修改确认回调，接收 dict(tool, args, preview)，
+                         返回 dict(approved: bool)。若为 None 则自动批准。
         """
         if not Config.validate():
             raise RuntimeError(
@@ -108,6 +119,7 @@ class CodingAgent:
 
         self.working_dir = working_dir
         self.on_step = on_step
+        self.on_confirm = on_confirm
 
         # 计划状态（由 create_plan / update_step / finish_task 工具读写）
         self.plan_state: dict = {}
@@ -200,6 +212,30 @@ class CodingAgent:
                         tool_args = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
                         tool_args = {}
+
+                    # ---- 文件修改工具需要用户确认 ----
+                    if tool_name in _FILE_MODIFY_TOOLS and self.on_confirm:
+                        preview = self._build_confirm_preview(tool_name, tool_args)
+                        decision = self.on_confirm({
+                            "tool": tool_name,
+                            "args": tool_args,
+                            "preview": preview,
+                        })
+                        if not decision.get("approved", False):
+                            reason = decision.get("reason", "用户拒绝")
+                            result = f"用户已拒绝此修改：{reason}"
+                            step_log.tool_results.append({
+                                "tool": tool_name,
+                                "args": tool_args,
+                                "result": result,
+                                "rejected": True,
+                            })
+                            self.messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": result,
+                            })
+                            continue  # 跳过执行，处理下一个工具调用
 
                     result = execute_tool(
                         tool_name, tool_args, self.working_dir, self.plan_state
@@ -348,6 +384,24 @@ class CodingAgent:
 
         # 重建：system + pre_user + history + remaining
         self.messages = [self.messages[0]] + pre_user_msgs + [history_msg] + remaining_msgs
+
+    @staticmethod
+    def _build_confirm_preview(tool_name: str, args: dict) -> str:
+        """构建文件修改的预览信息，供用户确认。"""
+        if tool_name == "write_file":
+            path = args.get("path", "?")
+            content = args.get("content", "")
+            lines = content.count("\n") + 1
+            return f"写入文件: {path} ({len(content)} 字符, {lines} 行)"
+        elif tool_name == "search_replace":
+            path = args.get("path", "?")
+            old = args.get("old_text", "")
+            new = args.get("new_text", "")
+            preview = f"修改文件: {path}\n"
+            preview += f"- 原文 ({len(old)} 字符):\n{old[:200]}\n"
+            preview += f"+ 替换为 ({len(new)} 字符):\n{new[:200]}"
+            return preview
+        return f"{tool_name}: {args}"
 
     def reset(self):
         """重置对话历史和计划状态。"""
