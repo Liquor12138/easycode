@@ -6,6 +6,7 @@ import type {
   ConfirmationInfo,
   TerminalEntry,
   StepLogInfo,
+  PlanState,
 } from '../types';
 import * as api from '../api/client';
 
@@ -38,6 +39,9 @@ interface AgentStore {
   // ---- 错误 ----
   error: string | null;
 
+  // ---- 计划 ----
+  plan: PlanState | null;
+
   // ---- Actions ----
   initStatus: () => Promise<void>;
   openProject: (path: string) => Promise<void>;
@@ -65,7 +69,7 @@ interface AgentStore {
 // ============================================================
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let lastStepCount = 0;
+let processedStepCount = 0;
 
 // ============================================================
 // Store 实现
@@ -87,6 +91,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   terminalEntries: [],
   terminalOpen: false,
   error: null,
+  plan: null,
 
   // ============================================================
   // 初始化：仅检测后端连接，不加载文件树
@@ -145,6 +150,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       terminalEntries: [],
       terminalOpen: false,
       error: null,
+      plan: null,
     });
   },
 
@@ -211,7 +217,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     try {
       const res = await api.runTask(text, workingDir);
       set({ taskId: res.task_id, agentStatus: 'running' });
-      lastStepCount = 0;
+      processedStepCount = 0;
 
       // 开始轮询
       get().stopPolling();
@@ -228,17 +234,49 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     if (pollTimer) clearInterval(pollTimer);
 
     pollTimer = setInterval(async () => {
-      const { taskId, messages, stepLogs } = get();
+      const { taskId, messages } = get();
       if (!taskId) return;
 
       try {
         const task = await api.fetchTask(taskId);
         const newMessages = [...messages];
-        const newStepLogs = [...stepLogs];
 
-        // 处理新的 step logs
-        if (task.step_count > lastStepCount) {
-          // 通过 task API 获取不到完整 step logs，用 confirmations 判断
+        // 处理新的 step logs：为每个工具调用生成消息
+        const stepLogs = task.step_logs || [];
+        if (stepLogs.length > processedStepCount) {
+          for (let i = processedStepCount; i < stepLogs.length; i++) {
+            const step = stepLogs[i];
+            for (const tc of step.tool_calls) {
+              // 文件修改工具已通过确认流程显示，跳过重复
+              if (tc.name === 'write_file' || tc.name === 'search_replace') {
+                continue;
+              }
+              // 跳过计划管理工具（不单独显示）
+              if (['create_plan', 'update_step', 'finish_task'].includes(tc.name)) {
+                continue;
+              }
+              let args: Record<string, unknown> = {};
+              try {
+                args = JSON.parse(tc.args);
+              } catch { /* ignore */ }
+              const resultInfo = step.tool_results?.find((r) => r.tool === tc.name);
+              newMessages.push({
+                id: `tc-${tc.id}`,
+                role: 'tool_call',
+                content: resultInfo?.result_preview || tc.name,
+                timestamp: Date.now(),
+                toolName: tc.name,
+                toolArgs: args,
+                toolResult: resultInfo?.result_preview,
+              });
+            }
+          }
+          processedStepCount = stepLogs.length;
+        }
+
+        // 更新计划状态
+        if (task.plan && task.plan.steps && task.plan.steps.length > 0) {
+          set({ plan: task.plan });
         }
 
         // 处理确认请求
@@ -263,7 +301,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             messages: newMessages,
           });
         } else if (task.status !== get().agentStatus) {
-          set({ agentStatus: task.status });
+          set({ agentStatus: task.status, messages: newMessages });
+        } else if (newMessages.length > messages.length) {
+          set({ messages: newMessages });
         }
 
         // 任务完成

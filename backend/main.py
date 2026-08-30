@@ -108,7 +108,33 @@ def _run_agent_background(task: TaskState):
     try:
         task.status = "running"
 
+        # 计划状态跟踪（从工具调用/结果中提取）
+        plan_data = {"title": "", "steps": []}
+
         def on_step(step: StepLog):
+            # 跟踪计划状态：检测 create_plan / update_step 工具调用
+            for i, tc in enumerate(step.tool_calls):
+                if tc["name"] == "create_plan":
+                    try:
+                        args = json.loads(tc["args"]) if isinstance(tc["args"], str) else tc["args"]
+                        plan_data["title"] = args.get("title", "")
+                        plan_data["steps"] = [
+                            {"index": idx, "description": s, "status": "pending", "result": ""}
+                            for idx, s in enumerate(args.get("steps", []))
+                        ]
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+                elif tc["name"] == "update_step" and i < len(step.tool_results):
+                    try:
+                        args = json.loads(tc["args"]) if isinstance(tc["args"], str) else tc["args"]
+                        step_idx = args.get("step_index", -1)
+                        result_text = args.get("result", "")
+                        if 0 <= step_idx < len(plan_data["steps"]):
+                            plan_data["steps"][step_idx]["status"] = "completed"
+                            plan_data["steps"][step_idx]["result"] = result_text
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+
             task.step_logs.append({
                 "step": step.step,
                 "content": step.content,
@@ -127,6 +153,8 @@ def _run_agent_background(task: TaskState):
                 ],
                 "duration_ms": step.duration_ms,
             })
+            # 同步计划状态到 task
+            task.plan = {"title": plan_data["title"], "steps": list(plan_data["steps"])}
 
         agent = CodingAgent(
             working_dir=task.working_dir,
@@ -257,6 +285,7 @@ def get_task(task_id: str):
         "task": task.task_text,
         "working_dir": task.working_dir,
         "step_count": len(task.step_logs),
+        "step_logs": task.step_logs,
     }
     if task.status == "completed" and task.result:
         resp["result"] = task.result
@@ -270,6 +299,9 @@ def get_task(task_id: str):
             if not c.event.is_set()
         ]
         resp["pending_confirmations"] = pending
+    # 始终附带计划状态（如果有）
+    if hasattr(task, 'plan') and task.plan.get("steps"):
+        resp["plan"] = task.plan
     return resp
 
 

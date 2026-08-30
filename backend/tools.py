@@ -484,17 +484,13 @@ def _execute_command(args: dict, working_dir: str) -> str:
     if not exec_dir.is_dir():
         return f"错误：执行目录不存在 '{cwd}'"
 
-    # 判断是否使用 shell
-    use_shell = True
-    executable = None
-    if os.name == "nt":
-        executable = "cmd.exe"
-
+    # 使用 shell 模式执行命令
+    # Windows 上 shell=True 会自动通过 COMSPEC 环境变量找到 cmd.exe
+    # 不要硬编码 executable，避免在某些环境下找不到 cmd.exe 导致 WinError 2
     try:
         result = subprocess.run(
             command,
-            shell=use_shell,
-            executable=executable,
+            shell=True,
             capture_output=True,
             text=True,
             cwd=str(exec_dir),

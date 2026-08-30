@@ -53,9 +53,16 @@ export interface TaskState {
   task: string;
   working_dir: string;
   step_count: number;
+  step_logs?: StepLogInfo[];
+  plan?: PlanState;
   result?: TaskResult;
   error?: string;
   pending_confirmations?: ConfirmationInfo[];
+}
+
+export interface PlanState {
+  title: string;
+  steps: PlanStep[];
 }
 
 export interface TaskResult {

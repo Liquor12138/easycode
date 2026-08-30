@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAgentStore } from '../../store/useAgentStore';
 import MessageBubble from './MessageBubble';
+import PlanProgress from './PlanProgress';
 import './ChatPanel.css';
 
 export default function ChatPanel() {
-  const { messages, agentStatus, sendMessage, pendingConfirmations } = useAgentStore();
+  const { messages, agentStatus, sendMessage, pendingConfirmations, plan } = useAgentStore();
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -49,6 +50,11 @@ export default function ChatPanel() {
           </span>
         )}
       </div>
+
+      {/* 计划进度 */}
+      {plan && plan.steps.length > 0 && (
+        <PlanProgress title={plan.title} steps={plan.steps} />
+      )}
 
       {/* 消息列表 */}
       <div className="chat-messages">
