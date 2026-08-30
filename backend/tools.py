@@ -1,6 +1,9 @@
 """
 工具定义与执行模块
-定义 Agent 可用的工具（读写文件、查看目录、执行命令），
+定义 Agent 可用的工具：
+  - 文件操作：读写文件、查看目录
+  - 终端执行：执行命令（含安全检查）
+  - 计划管理：制定计划、标记步骤、完成任务
 并实现安全性检查：路径沙箱、危险命令拦截、超时控制。
 """
 
@@ -110,6 +113,67 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    # ---- 计划管理工具 ----
+    {
+        "type": "function",
+        "function": {
+            "name": "create_plan",
+            "description": "在开始执行任务前，制定一个分步完成计划。每个步骤将按顺序执行和跟踪。应在执行任何实际操作之前调用此工具。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "计划的简短标题",
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "按顺序排列的任务步骤描述列表",
+                    },
+                },
+                "required": ["title", "steps"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_step",
+            "description": "将一个计划步骤标记为已完成。每完成一个步骤后应立即调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "step_index": {
+                        "type": "integer",
+                        "description": "要标记为完成的步骤索引（从 0 开始）",
+                    },
+                    "result": {
+                        "type": "string",
+                        "description": "该步骤的完成结果简述",
+                    },
+                },
+                "required": ["step_index", "result"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "finish_task",
+            "description": "所有计划步骤完成后调用，提交最终总结并结束任务。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "任务完成的最终总结，包括完成了什么、创建/修改了哪些文件、执行了哪些关键命令",
+                    },
+                },
+                "required": ["summary"],
+            },
+        },
+    },
 ]
 
 # ============================================================
@@ -172,12 +236,19 @@ def _check_command_safety(command: str) -> None:
 # 工具执行
 # ============================================================
 
-def execute_tool(tool_name: str, arguments: dict, working_dir: str) -> str:
+def execute_tool(
+    tool_name: str,
+    arguments: dict,
+    working_dir: str,
+    plan_state: Optional[dict] = None,
+) -> str:
     """
     根据工具名和参数执行对应操作，返回字符串结果。
     所有文件操作都经过路径沙箱检查。
+    plan_state 用于计划管理工具的状态存储（由 Agent 传入）。
     """
     try:
+        # ---- 文件操作工具 ----
         if tool_name == "read_file":
             return _read_file(arguments, working_dir)
         elif tool_name == "write_file":
@@ -186,6 +257,13 @@ def execute_tool(tool_name: str, arguments: dict, working_dir: str) -> str:
             return _list_directory(arguments, working_dir)
         elif tool_name == "execute_command":
             return _execute_command(arguments, working_dir)
+        # ---- 计划管理工具 ----
+        elif tool_name == "create_plan":
+            return _create_plan(arguments, plan_state)
+        elif tool_name == "update_step":
+            return _update_step(arguments, plan_state)
+        elif tool_name == "finish_task":
+            return _finish_task(arguments, plan_state)
         else:
             return f"错误：未知工具 '{tool_name}'"
     except PermissionError as e:
@@ -331,3 +409,80 @@ def _execute_command(args: dict, working_dir: str) -> str:
         )
     except Exception as e:
         return f"命令执行失败: {e}"
+
+
+# ============================================================
+# 计划管理工具
+# ============================================================
+
+def _create_plan(args: dict, plan_state: Optional[dict]) -> str:
+    """创建任务计划。"""
+    if plan_state is None:
+        return "错误：计划状态未初始化"
+
+    title = args["title"]
+    steps = args["steps"]
+
+    if not steps:
+        return "错误：步骤列表不能为空"
+
+    plan_state["title"] = title
+    plan_state["steps"] = [
+        {"index": i, "description": s, "status": "pending", "result": ""}
+        for i, s in enumerate(steps)
+    ]
+    plan_state["finished"] = False
+    plan_state["summary"] = ""
+
+    step_list = "\n".join(f"  [{i}] {s}" for i, s in enumerate(steps))
+    return f"计划已创建：「{title}」\n共 {len(steps)} 个步骤：\n{step_list}\n\n请按顺序逐步执行，每完成一步调用 update_step 标记。全部完成后调用 finish_task 提交总结。"
+
+
+def _update_step(args: dict, plan_state: Optional[dict]) -> str:
+    """标记步骤完成。"""
+    if plan_state is None or "steps" not in plan_state:
+        return "错误：尚未创建计划，请先调用 create_plan"
+
+    step_index = args["step_index"]
+    result = args.get("result", "")
+    steps = plan_state["steps"]
+
+    if step_index < 0 or step_index >= len(steps):
+        return f"错误：步骤索引 {step_index} 超出范围（共 {len(steps)} 步，索引 0~{len(steps)-1}）"
+
+    step = steps[step_index]
+    step["status"] = "completed"
+    step["result"] = result
+
+    # 统计进度
+    completed = sum(1 for s in steps if s["status"] == "completed")
+    total = len(steps)
+    remaining = [f"[{s['index']}] {s['description']}" for s in steps if s["status"] == "pending"]
+
+    msg = f"步骤 [{step_index}] 已标记完成：「{result}」\n进度：{completed}/{total}"
+    if remaining:
+        msg += f"\n剩余步骤：{', '.join(remaining)}"
+    else:
+        msg += "\n所有步骤已完成！请调用 finish_task 提交最终总结。"
+    return msg
+
+
+def _finish_task(args: dict, plan_state: Optional[dict]) -> str:
+    """完成任务，输出总结。"""
+    if plan_state is None:
+        return "错误：计划状态未初始化"
+
+    summary = args["summary"]
+    plan_state["finished"] = True
+    plan_state["summary"] = summary
+
+    # 附带计划执行概况
+    if "steps" in plan_state:
+        completed = sum(1 for s in plan_state["steps"] if s["status"] == "completed")
+        total = len(plan_state["steps"])
+        overview = "\n".join(
+            f"  [{'v' if s['status'] == 'completed' else 'x'}] [{s['index']}] {s['description']}"
+            for s in plan_state["steps"]
+        )
+        return f"任务完成。\n\n计划「{plan_state.get('title', '')}」执行情况：\n{overview}\n完成 {completed}/{total}\n\n总结：{summary}"
+    return f"任务完成。总结：{summary}"

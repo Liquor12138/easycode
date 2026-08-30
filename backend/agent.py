@@ -1,9 +1,10 @@
 """
 Agent 核心循环模块
 实现与 DeepSeek 模型的交互循环：
-  1. 将用户任务 + 对话历史 + 工具定义发送给模型
-  2. 解析模型响应：若包含 tool_calls 则执行工具，将结果追加到历史
-  3. 重复直到模型给出最终文本回答，或达到迭代上限
+  1. system message（角色 + 规范）+ user message（需求）
+  2. 模型返回 assistant message（含 tool_calls）
+  3. 本地执行工具，将 tool message（结果 + tool_call_id）追加到历史
+  4. 重复 2-3 直到模型调用 finish_task 或达到迭代上限
 """
 
 import json
@@ -48,23 +49,30 @@ class AgentResult:
 
 SYSTEM_PROMPT = """你是一个编程智能体（Coding Agent），能够通过工具自主完成编程任务。
 
-你可以使用以下工具：
-- read_file: 读取文件内容
-- write_file: 创建或覆盖写入文件
-- list_directory: 查看目录结构
-- execute_command: 执行终端命令
+## 可用工具
 
-工作原则：
-1. 先理解任务需求，必要时先查看项目结构
-2. 规划实现步骤，逐步完成
-3. 每完成一步，检查结果是否符合预期
-4. 遇到错误时分析原因并尝试修复
-5. 任务完成后给出清晰的总结
+文件与终端：
+- read_file(path): 读取文件内容
+- write_file(path, content): 创建或覆盖写入文件
+- list_directory(path): 查看目录结构
+- execute_command(command): 执行终端命令
 
-注意：
+计划管理：
+- create_plan(title, steps): 制定分步计划
+- update_step(step_index, result): 标记某步骤已完成
+- finish_task(summary): 提交总结并结束任务
+
+## 工作流程（必须严格遵守）
+
+1. **制定计划**：收到任务后，先分析需求，然后调用 create_plan 制定分步计划
+2. **逐步执行**：按计划顺序执行每一步，每完成一步立即调用 update_step 标记
+3. **完成总结**：所有步骤完成后，调用 finish_task 提交最终总结，结束任务
+
+## 规范
+
 - 文件路径使用相对路径（相对于工作目录）
-- 执行命令前确认当前目录是否正确
-- 对于破坏性操作要格外谨慎
+- 执行命令前确认当前目录
+- 遇到错误时分析原因并尝试修复
 - 如果任务不明确，直接说明你的疑问"""
 
 
@@ -92,6 +100,9 @@ class CodingAgent:
         self.working_dir = working_dir
         self.on_step = on_step
 
+        # 计划状态（由 create_plan / update_step / finish_task 工具读写）
+        self.plan_state: dict = {}
+
         # 初始化 OpenAI 客户端（指向 DeepSeek）
         self.client = OpenAI(
             api_key=Config.DEEPSEEK_API_KEY,
@@ -110,6 +121,9 @@ class CodingAgent:
         """
         start_time = time.time()
         steps: list[StepLog] = []
+
+        # 重置计划状态
+        self.plan_state = {}
 
         # 将用户任务加入对话历史
         self.messages.append({"role": "user", "content": task})
@@ -167,6 +181,7 @@ class CodingAgent:
                 step_log.content = message.content or ""
 
                 # 逐个执行工具
+                finish_called = False
                 for tc in message.tool_calls:
                     tool_name = tc.function.name
                     try:
@@ -174,7 +189,9 @@ class CodingAgent:
                     except json.JSONDecodeError:
                         tool_args = {}
 
-                    result = execute_tool(tool_name, tool_args, self.working_dir)
+                    result = execute_tool(
+                        tool_name, tool_args, self.working_dir, self.plan_state
+                    )
                     step_log.tool_results.append({
                         "tool": tool_name,
                         "args": tool_args,
@@ -188,11 +205,27 @@ class CodingAgent:
                         "content": result,
                     })
 
+                    # 检测 finish_task：模型主动结束任务
+                    if tool_name == "finish_task":
+                        finish_called = True
+
                 step_log.duration_ms = int((time.time() - step_start) * 1000)
                 steps.append(step_log)
                 if self.on_step:
                     self.on_step(step_log)
-                # 继续循环，让模型看到工具结果后继续决策
+
+                # 如果模型调用了 finish_task，任务完成
+                if finish_called:
+                    summary = self.plan_state.get("summary", result)
+                    total_ms = int((time.time() - start_time) * 1000)
+                    return AgentResult(
+                        success=True,
+                        final_answer=summary,
+                        steps=steps,
+                        total_steps=len(steps),
+                        total_duration_ms=total_ms,
+                    )
+                # 否则继续循环，让模型看到工具结果后继续决策
 
             # 情况 2: 模型返回了纯文本（最终回答）
             else:
@@ -235,5 +268,6 @@ class CodingAgent:
         )
 
     def reset(self):
-        """重置对话历史，保留 system prompt。"""
+        """重置对话历史和计划状态。"""
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self.plan_state = {}
