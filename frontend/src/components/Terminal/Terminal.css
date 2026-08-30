@@ -1,0 +1,116 @@
+.terminal-panel {
+  background: #1a1a1a;
+  border-top: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: #252526;
+  cursor: pointer;
+  user-select: none;
+  border-top: 1px solid #333;
+}
+.terminal-header:hover {
+  background: #2a2d2e;
+}
+
+.terminal-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #bbb;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.terminal-toggle {
+  font-size: 10px;
+  color: #666;
+}
+
+/* ---- 终端内容 ---- */
+
+.terminal-body {
+  display: flex;
+  flex-direction: column;
+  height: 200px;
+}
+
+.terminal-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+}
+.terminal-output::-webkit-scrollbar {
+  width: 6px;
+}
+.terminal-output::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}
+
+.terminal-empty {
+  color: #555;
+  text-align: center;
+  padding: 16px;
+}
+
+.terminal-entry {
+  margin-bottom: 8px;
+}
+
+.terminal-cmd-line {
+  display: flex;
+  gap: 8px;
+  color: #6c6;
+}
+
+.terminal-prompt {
+  color: #4caf50;
+  flex-shrink: 0;
+}
+
+.terminal-cmd {
+  color: #ddd;
+}
+
+.terminal-output-text {
+  margin: 2px 0 0 16px;
+  color: #aaa;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.terminal-output-text.error {
+  color: #f88;
+}
+
+/* ---- 输入行 ---- */
+
+.terminal-input-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid #2a2a2a;
+  background: #1e1e1e;
+}
+
+.terminal-input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: #ddd;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  outline: none;
+}
+.terminal-input::placeholder {
+  color: #555;
+}

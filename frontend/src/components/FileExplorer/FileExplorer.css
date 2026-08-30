@@ -1,0 +1,111 @@
+.file-explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #252526;
+  border-right: 1px solid #333;
+  overflow: hidden;
+}
+
+.explorer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #bbb;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.explorer-refresh {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.explorer-refresh:hover {
+  color: #ddd;
+}
+
+.explorer-workdir {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #777;
+  border-bottom: 1px solid #2a2a2a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.explorer-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.explorer-loading,
+.explorer-empty {
+  padding: 16px;
+  text-align: center;
+  color: #666;
+  font-size: 12px;
+}
+
+/* ---- 树节点 ---- */
+
+.tree-node-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #ccc;
+  user-select: none;
+  white-space: nowrap;
+}
+.tree-node-label:hover {
+  background: #2a2d2e;
+}
+.tree-node-label.active {
+  background: #37373d;
+  color: #fff;
+}
+
+.tree-indent {
+  display: inline-block;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.icon-folder {
+  color: #dcb67a;
+  flex-shrink: 0;
+}
+.icon-file {
+  color: #8db9e2;
+  flex-shrink: 0;
+}
+
+.tree-node-name {
+  margin-left: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 滚动条 */
+.explorer-tree::-webkit-scrollbar {
+  width: 6px;
+}
+.explorer-tree::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 3px;
+}

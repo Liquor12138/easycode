@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from config import Config
 from agent import CodingAgent, AgentResult, StepLog
+from tools import _resolve_path, _execute_command, _check_command_safety
 
 app = FastAPI(title="Coding Agent Backend", version="0.2.0")
 
@@ -172,6 +173,10 @@ class ConfirmRequest(BaseModel):
     reason: str = ""
 
 
+class TerminalRequest(BaseModel):
+    command: str
+
+
 # ============================================================
 # API 端点
 # ============================================================
@@ -316,6 +321,114 @@ def get_history():
     if _last_result is None:
         return {"message": "暂无执行记录"}
     return _last_result
+
+
+@app.get("/api/files")
+def get_file_tree(path: str = "."):
+    """获取工作目录下的文件树结构，供前端文件浏览器使用。"""
+    try:
+        dir_path = _resolve_path(path, _working_dir)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    if not dir_path.exists() or not dir_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"目录不存在: {path}")
+
+    skip_dirs = {"node_modules", ".git", "__pycache__", ".venv", "venv",
+                 ".idea", "dist", "build", ".next", ".cache", "site-packages"}
+
+    def _build_tree(d: Path, depth: int) -> list:
+        if depth > 5:
+            return []
+        items = []
+        try:
+            entries = sorted(
+                d.iterdir(),
+                key=lambda x: (not x.is_dir(), x.name.lower()),
+            )
+        except PermissionError:
+            return items
+        for entry in entries:
+            if entry.is_dir():
+                if entry.name in skip_dirs or entry.name.startswith("."):
+                    continue
+                items.append({
+                    "name": entry.name,
+                    "type": "directory",
+                    "path": str(entry.relative_to(Path(_working_dir).resolve())),
+                    "children": _build_tree(entry, depth + 1),
+                })
+            else:
+                items.append({
+                    "name": entry.name,
+                    "type": "file",
+                    "path": str(entry.relative_to(Path(_working_dir).resolve())),
+                })
+        return items
+
+    return {"path": path, "tree": _build_tree(dir_path, 0)}
+
+
+@app.get("/api/file/{file_path:path}")
+def read_file_content(file_path: str):
+    """读取指定文件内容，供前端代码查看器使用。"""
+    try:
+        fp = _resolve_path(file_path, _working_dir)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    if not fp.exists() or not fp.is_file():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
+
+    size = fp.stat().st_size
+    if size > Config.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件过大 ({size} bytes)，超过限制 ({Config.MAX_FILE_SIZE} bytes)",
+        )
+
+    # 根据扩展名推断语言
+    ext_map = {
+        ".py": "python", ".js": "javascript", ".ts": "typescript",
+        ".jsx": "javascript", ".tsx": "typescript", ".java": "java",
+        ".c": "c", ".cpp": "cpp", ".cc": "cpp", ".h": "c",
+        ".html": "html", ".css": "css", ".json": "json",
+        ".xml": "xml", ".md": "markdown", ".yaml": "yaml",
+        ".yml": "yaml", ".toml": "toml", ".sh": "shell",
+        ".bat": "bat", ".sql": "sql", ".txt": "plaintext",
+    }
+    language = ext_map.get(fp.suffix.lower(), "plaintext")
+
+    try:
+        content = fp.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        content = fp.read_bytes().decode("latin-1")
+
+    return {
+        "path": file_path,
+        "content": content,
+        "language": language,
+        "size": size,
+    }
+
+
+@app.post("/api/terminal")
+def run_terminal_command(req: TerminalRequest):
+    """在前端终端中执行命令。"""
+    if not req.command.strip():
+        raise HTTPException(status_code=400, detail="命令不能为空")
+
+    try:
+        _check_command_safety(req.command)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    args = {"command": req.command, "cwd": "."}
+    try:
+        output = _execute_command(args, _working_dir)
+        return {"output": output, "exit_code": 0}
+    except Exception as e:
+        return {"output": str(e), "exit_code": 1}
 
 
 @app.get("/api/health")
