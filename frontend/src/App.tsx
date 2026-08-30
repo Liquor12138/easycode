@@ -5,15 +5,20 @@ import CodeViewer from './components/CodeViewer/CodeViewer';
 import DiffViewer from './components/CodeViewer/DiffViewer';
 import ChatPanel from './components/ChatPanel/ChatPanel';
 import Terminal from './components/Terminal/Terminal';
+import WelcomePage from './components/WelcomePage/WelcomePage';
 import { useAgentStore } from './store/useAgentStore';
 import './App.css';
 
 export default function App() {
   const [explorerOpen, setExplorerOpen] = useState(true);
-  const { pendingConfirmations, openFiles, activeFile } = useAgentStore();
+  const { projectSelected, pendingConfirmations, openFiles, activeFile } = useAgentStore();
 
-  // 获取当前活跃文件的内容（用于 diff 对比）
   const activeFileData = activeFile ? openFiles.get(activeFile) : null;
+
+  // 未选择项目时显示全屏欢迎页
+  if (!projectSelected) {
+    return <WelcomePage />;
+  }
 
   return (
     <div className="app-container">
@@ -38,7 +43,6 @@ export default function App() {
 
         {/* 中间：代码查看器 + Diff + 终端 */}
         <div className="panel-center">
-          {/* 如果有待确认的修改，显示 Diff 视图 */}
           {pendingConfirmations.length > 0 && activeFileData && (
             <DiffViewer
               confirmation={pendingConfirmations[0]}
@@ -47,12 +51,10 @@ export default function App() {
             />
           )}
 
-          {/* 代码查看器 */}
           <div className="center-editor">
             <CodeViewer />
           </div>
 
-          {/* 底部终端 */}
           <Terminal />
         </div>
 

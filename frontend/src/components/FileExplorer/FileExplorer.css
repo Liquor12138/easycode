@@ -21,7 +21,13 @@
   flex-shrink: 0;
 }
 
-.explorer-refresh {
+.explorer-header-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.explorer-refresh,
+.explorer-reselect {
   background: none;
   border: none;
   color: #888;
@@ -30,8 +36,12 @@
   padding: 0 4px;
   line-height: 1;
 }
-.explorer-refresh:hover {
+.explorer-refresh:hover,
+.explorer-reselect:hover {
   color: #ddd;
+}
+.explorer-reselect {
+  font-size: 14px;
 }
 
 .explorer-workdir {

@@ -14,7 +14,8 @@ import * as api from '../api/client';
 // ============================================================
 
 interface AgentStore {
-  // ---- 工作目录 & 文件树 ----
+  // ---- 项目状态 ----
+  projectSelected: boolean;
   workingDir: string;
   fileTree: FileNode[];
   loadingFiles: boolean;
@@ -39,6 +40,9 @@ interface AgentStore {
 
   // ---- Actions ----
   initStatus: () => Promise<void>;
+  openProject: (path: string) => Promise<void>;
+  createAndOpenProject: (parentPath: string, projectName: string) => Promise<void>;
+  resetToWelcome: () => void;
   loadFileTree: () => Promise<void>;
   openFile: (path: string) => Promise<void>;
   closeFile: (path: string) => void;
@@ -69,6 +73,7 @@ let lastStepCount = 0;
 
 export const useAgentStore = create<AgentStore>((set, get) => ({
   // ---- 初始状态 ----
+  projectSelected: false,
   workingDir: '',
   fileTree: [],
   loadingFiles: false,
@@ -84,16 +89,63 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   error: null,
 
   // ============================================================
-  // 初始化：获取后端状态
+  // 初始化：仅检测后端连接，不加载文件树
   // ============================================================
   initStatus: async () => {
     try {
       const status = await api.fetchStatus();
       set({ workingDir: status.working_dir });
-      await get().loadFileTree();
     } catch (e: unknown) {
       set({ error: `无法连接后端: ${(e as Error).message}` });
     }
+  },
+
+  // ============================================================
+  // 打开项目：设置工作目录并加载文件树
+  // ============================================================
+  openProject: async (path: string) => {
+    try {
+      await api.setWorkdir(path);
+      set({ workingDir: path, projectSelected: true, error: null });
+      await get().loadFileTree();
+    } catch (e: unknown) {
+      set({ error: `打开项目失败: ${(e as Error).message}` });
+    }
+  },
+
+  // ============================================================
+  // 创建并打开项目
+  // ============================================================
+  createAndOpenProject: async (parentPath: string, projectName: string) => {
+    try {
+      const res = await api.createProject(parentPath, projectName);
+      await api.setWorkdir(res.path);
+      set({ workingDir: res.path, projectSelected: true, error: null });
+      await get().loadFileTree();
+    } catch (e: unknown) {
+      set({ error: `创建项目失败: ${(e as Error).message}` });
+    }
+  },
+
+  // ============================================================
+  // 重置到欢迎页：清除所有状态
+  // ============================================================
+  resetToWelcome: () => {
+    get().stopPolling();
+    set({
+      projectSelected: false,
+      fileTree: [],
+      openFiles: new Map(),
+      activeFile: null,
+      messages: [],
+      taskId: null,
+      agentStatus: 'idle',
+      stepLogs: [],
+      pendingConfirmations: [],
+      terminalEntries: [],
+      terminalOpen: false,
+      error: null,
+    });
   },
 
   // ============================================================

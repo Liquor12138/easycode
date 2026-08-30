@@ -177,6 +177,11 @@ class TerminalRequest(BaseModel):
     command: str
 
 
+class CreateProjectRequest(BaseModel):
+    parent_path: str
+    project_name: str
+
+
 # ============================================================
 # API 端点
 # ============================================================
@@ -429,6 +434,100 @@ def run_terminal_command(req: TerminalRequest):
         return {"output": output, "exit_code": 0}
     except Exception as e:
         return {"output": str(e), "exit_code": 1}
+
+
+@app.get("/api/browse")
+def browse_directories(path: str = ""):
+    """浏览目录结构，供前端文件夹选择器使用。
+    path 为空时返回系统盘符（Windows）或根目录（Unix）。
+    """
+    if not path:
+        # 返回顶层入口
+        if os.name == "nt":
+            import string
+            drives = []
+            for letter in string.ascii_uppercase:
+                d = f"{letter}:\\"
+                if Path(d).exists():
+                    drives.append({"name": f"{letter}:", "path": d, "type": "drive"})
+            return {"current": "", "entries": drives}
+        else:
+            return {"current": "", "entries": [
+                {"name": "/", "path": "/", "type": "directory"}
+            ]}
+
+    target = Path(path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"路径不存在: {path}")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail=f"不是目录: {path}")
+
+    entries = []
+    try:
+        for entry in sorted(target.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            if entry.is_dir() and not entry.name.startswith("."):
+                entries.append({
+                    "name": entry.name,
+                    "path": str(entry),
+                    "type": "directory",
+                })
+    except PermissionError:
+        pass
+
+    return {
+        "current": str(target.resolve()),
+        "parent": str(target.parent.resolve()) if target.parent != target else "",
+        "entries": entries,
+    }
+
+
+@app.post("/api/create-project")
+def create_project(req: CreateProjectRequest):
+    """在指定路径下创建新项目目录。"""
+    parent = Path(req.parent_path)
+    if not parent.exists() or not parent.is_dir():
+        raise HTTPException(status_code=400, detail=f"父目录不存在: {req.parent_path}")
+
+    # 验证项目名称
+    name = req.project_name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="项目名称不能为空")
+    if any(c in name for c in r'<>:"/\|?*'):
+        raise HTTPException(status_code=400, detail="项目名称包含非法字符")
+
+    project_dir = parent / name
+    if project_dir.exists():
+        raise HTTPException(status_code=400, detail=f"目录已存在: {project_dir}")
+
+    project_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "path": str(project_dir),
+        "name": name,
+        "message": f"项目已创建: {project_dir}",
+    }
+
+
+@app.get("/api/pick-folder")
+def pick_folder():
+    """打开系统原生文件夹选择对话框，返回用户选择的路径。"""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        # 隐藏主窗口
+        root = tk.Tk()
+        root.withdraw()
+        # 保持对话框在最前
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(
+            title="选择文件夹",
+            parent=root,
+        )
+        root.destroy()
+        if not path:
+            return {"selected": False, "path": ""}
+        return {"selected": True, "path": path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"无法打开文件夹选择器: {e}")
 
 
 @app.get("/api/health")

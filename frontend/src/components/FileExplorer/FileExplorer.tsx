@@ -58,15 +58,20 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
 // ============================================================
 
 export default function FileExplorer() {
-  const { fileTree, workingDir, loadFileTree, loadingFiles } = useAgentStore();
+  const { fileTree, workingDir, loadFileTree, loadingFiles, resetToWelcome } = useAgentStore();
 
   return (
     <div className="file-explorer">
       <div className="explorer-header">
         <span className="explorer-title">文件浏览器</span>
-        <button className="explorer-refresh" onClick={loadFileTree} title="刷新">
-          &#x21bb;
-        </button>
+        <div className="explorer-header-actions">
+          <button className="explorer-refresh" onClick={loadFileTree} title="刷新">
+            &#x21bb;
+          </button>
+          <button className="explorer-reselect" onClick={resetToWelcome} title="重新选择项目">
+            &#x21B6;
+          </button>
+        </div>
       </div>
 
       <div className="explorer-workdir" title={workingDir}>

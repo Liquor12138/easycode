@@ -1,0 +1,202 @@
+/* ============================================================
+   全屏欢迎页
+   ============================================================ */
+
+.welcome-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  width: 100vw;
+  background: #1a1a2e;
+  background-image:
+    radial-gradient(ellipse at 20% 50%, rgba(0, 122, 204, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 50%, rgba(100, 60, 180, 0.06) 0%, transparent 50%);
+}
+
+.welcome-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 40px;
+}
+
+/* ---- 品牌 ---- */
+
+.welcome-brand {
+  text-align: center;
+}
+
+.welcome-logo {
+  font-size: 72px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  margin: 0 0 12px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  line-height: 1.2;
+  color: #ffffff;
+  text-shadow: 0 0 40px rgba(0, 122, 204, 0.25);
+}
+
+.welcome-tagline {
+  font-size: 16px;
+  color: #666;
+  letter-spacing: 4px;
+}
+
+/* ---- 按钮 ---- */
+
+.welcome-buttons {
+  display: flex;
+  gap: 20px;
+}
+
+.welcome-btn-primary,
+.welcome-btn-secondary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 32px;
+  border: 1px solid #333;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #ddd;
+  background: #252536;
+}
+
+.welcome-btn-primary:hover:not(:disabled) {
+  background: #2a2d4a;
+  border-color: #007acc;
+  color: #fff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 122, 204, 0.2);
+}
+
+.welcome-btn-secondary:hover:not(:disabled) {
+  background: #2a3a2a;
+  border-color: #4caf50;
+  color: #fff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(76, 175, 80, 0.2);
+}
+
+.welcome-btn-primary:disabled,
+.welcome-btn-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-create-icon {
+  font-size: 20px;
+  font-weight: 700;
+  color: #4caf50;
+}
+
+/* ---- 创建项目名称输入 ---- */
+
+.welcome-name-dialog {
+  background: #252536;
+  border: 1px solid #444;
+  border-radius: 12px;
+  padding: 20px 24px;
+  width: 380px;
+  text-align: center;
+}
+
+.name-dialog-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #ddd;
+  margin: 0 0 6px;
+}
+
+.name-dialog-path {
+  font-size: 12px;
+  color: #777;
+  margin: 0 0 16px;
+  word-break: break-all;
+}
+
+.name-dialog-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.name-dialog-input-row label {
+  font-size: 13px;
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.name-dialog-input {
+  flex: 1;
+  background: #1e1e1e;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #ddd;
+  font-size: 13px;
+  outline: none;
+}
+.name-dialog-input:focus {
+  border-color: #007acc;
+}
+
+.name-dialog-error {
+  font-size: 12px;
+  color: #f88;
+  margin: 8px 0 0;
+}
+
+.name-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.name-dialog-btn {
+  padding: 6px 20px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.name-dialog-btn-cancel {
+  background: #333;
+  color: #ccc;
+}
+.name-dialog-btn-cancel:hover {
+  background: #444;
+}
+
+.name-dialog-btn-confirm {
+  background: #4caf50;
+  color: #fff;
+}
+.name-dialog-btn-confirm:hover {
+  background: #43a047;
+}
+
+/* ---- 状态 ---- */
+
+.welcome-error {
+  font-size: 13px;
+  color: #f88;
+  background: rgba(90, 26, 26, 0.5);
+  padding: 8px 16px;
+  border-radius: 6px;
+  max-width: 400px;
+  text-align: center;
+}
+
+.welcome-loading {
+  font-size: 13px;
+  color: #6cb;
+}

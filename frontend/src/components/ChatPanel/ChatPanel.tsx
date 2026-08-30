@@ -30,6 +30,7 @@ export default function ChatPanel() {
 
   const isRunning = agentStatus === 'running' || agentStatus === 'pending';
   const hasPendingConf = pendingConfirmations.length > 0;
+  const canSend = !isRunning;
 
   return (
     <div className="chat-panel">
@@ -74,13 +75,13 @@ export default function ChatPanel() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={isRunning ? 'Agent 正在执行任务...' : '输入任务描述... (Enter 发送, Shift+Enter 换行)'}
-          disabled={isRunning}
+          disabled={!canSend}
           rows={3}
         />
         <button
           className="chat-send-btn"
           onClick={handleSend}
-          disabled={!input.trim() || isRunning}
+          disabled={!input.trim() || !canSend}
         >
           发送
         </button>

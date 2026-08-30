@@ -99,3 +99,37 @@ export function executeTerminalCommand(command: string): Promise<{ output: strin
 export function fetchHistory(): Promise<import('../types').TaskResult | { message: string }> {
   return request('/history');
 }
+
+// ============================================================
+// 目录浏览 & 项目创建
+// ============================================================
+
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  type: 'directory' | 'drive';
+}
+
+export interface BrowseResult {
+  current: string;
+  parent?: string;
+  entries: BrowseEntry[];
+}
+
+export function browseDirectories(path = ''): Promise<BrowseResult> {
+  return request(`/browse?path=${encodeURIComponent(path)}`);
+}
+
+export function createProject(
+  parentPath: string,
+  projectName: string,
+): Promise<{ path: string; name: string; message: string }> {
+  return request('/create-project', {
+    method: 'POST',
+    body: JSON.stringify({ parent_path: parentPath, project_name: projectName }),
+  });
+}
+
+export function pickNativeFolder(): Promise<{ selected: boolean; path: string }> {
+  return request('/pick-folder');
+}
