@@ -8,6 +8,7 @@
 """
 
 import os
+import re
 import subprocess
 import shutil
 from pathlib import Path
@@ -110,6 +111,110 @@ TOOL_SCHEMAS = [
                     },
                 },
                 "required": ["command"],
+            },
+        },
+    },
+    # ---- 代码编辑与搜索工具 ----
+    {
+        "type": "function",
+        "function": {
+            "name": "search_replace",
+            "description": "在文件中精确查找一段文本并替换为新文本。适用于对文件进行局部修改，要求 old_text 在文件中唯一匹配。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "要修改的文件路径",
+                    },
+                    "old_text": {
+                        "type": "string",
+                        "description": "要被替换的原始文本（必须在文件中唯一匹配）",
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "替换后的新文本",
+                    },
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_text",
+            "description": "在一个文件或目录中搜索包含指定文本的行，返回匹配的行号和内容。支持正则表达式。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "要搜索的文本或正则表达式",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "要搜索的文件或目录路径，默认工作目录",
+                        "default": ".",
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "文件名过滤 glob 模式（如 '*.py'），仅在搜索目录时生效",
+                        "default": "",
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "是否区分大小写，默认 true",
+                        "default": True,
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_diagnostics",
+            "description": "获取文件的编译器/linter 报错信息。根据文件扩展名自动选择检查工具（Python->py_compile，JS->node --check 等）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "要检查的文件路径",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_symbols",
+            "description": "列出源代码文件中定义的符号：函数、类、变量、常量等。支持 Python、JavaScript/TypeScript、Java、C/C++ 等语言。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "要分析的源代码文件路径",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_workdir",
+            "description": "获取当前工作目录的绝对路径。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
             },
         },
     },
@@ -257,6 +362,17 @@ def execute_tool(
             return _list_directory(arguments, working_dir)
         elif tool_name == "execute_command":
             return _execute_command(arguments, working_dir)
+        # ---- 代码编辑与搜索工具 ----
+        elif tool_name == "search_replace":
+            return _search_replace(arguments, working_dir)
+        elif tool_name == "search_text":
+            return _search_text(arguments, working_dir)
+        elif tool_name == "get_diagnostics":
+            return _get_diagnostics(arguments, working_dir)
+        elif tool_name == "list_symbols":
+            return _list_symbols(arguments, working_dir)
+        elif tool_name == "get_workdir":
+            return _get_workdir(arguments, working_dir)
         # ---- 计划管理工具 ----
         elif tool_name == "create_plan":
             return _create_plan(arguments, plan_state)
@@ -486,3 +602,251 @@ def _finish_task(args: dict, plan_state: Optional[dict]) -> str:
         )
         return f"任务完成。\n\n计划「{plan_state.get('title', '')}」执行情况：\n{overview}\n完成 {completed}/{total}\n\n总结：{summary}"
     return f"任务完成。总结：{summary}"
+
+
+# ============================================================
+# 代码编辑与搜索工具
+# ============================================================
+
+def _search_replace(args: dict, working_dir: str) -> str:
+    """在文件中精确查找并替换文本。"""
+    file_path = _resolve_path(args["path"], working_dir)
+
+    if not file_path.exists():
+        return f"错误：文件不存在 '{args['path']}'"
+    if not file_path.is_file():
+        return f"错误：'{args['path']}' 不是一个文件"
+
+    old_text = args["old_text"]
+    new_text = args["new_text"]
+
+    content = file_path.read_text(encoding="utf-8")
+    count = content.count(old_text)
+
+    if count == 0:
+        return "错误：未找到匹配的文本，请检查 old_text 是否与原文件完全一致（包括空格和缩进）"
+    if count > 1:
+        return f"错误：找到 {count} 处匹配，old_text 必须唯一。请提供更多上下文以确保唯一匹配。"
+
+    new_content = content.replace(old_text, new_text, 1)
+    file_path.write_text(new_content, encoding="utf-8")
+    return f"成功替换 1 处匹配（{len(old_text)} 字符 -> {len(new_text)} 字符）"
+
+
+def _search_text(args: dict, working_dir: str) -> str:
+    """在文件或目录中搜索文本，返回匹配行号。"""
+    pattern = args["pattern"]
+    target = _resolve_path(args.get("path", "."), working_dir)
+    file_pattern = args.get("file_pattern", "")
+    case_sensitive = args.get("case_sensitive", True)
+
+    # 编译正则
+    flags = 0 if case_sensitive else re.IGNORECASE
+    try:
+        regex = re.compile(pattern, flags)
+    except re.error as e:
+        return f"错误：无效的正则表达式 '{pattern}': {e}"
+
+    results = []
+    max_results = 100
+
+    def _search_in_file(fpath: Path):
+        if len(results) >= max_results:
+            return
+        try:
+            lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception:
+            return
+        for i, line in enumerate(lines, 1):
+            if regex.search(line):
+                rel = fpath.relative_to(Path(working_dir).resolve())
+                results.append(f"  {rel}:{i}: {line.strip()}")
+                if len(results) >= max_results:
+                    results.append(f"  ... 已达到最大结果数 {max_results}，请缩小搜索范围")
+                    return
+
+    if target.is_file():
+        _search_in_file(target)
+    elif target.is_dir():
+        # 遍历目录
+        skip_dirs = {"__pycache__", "node_modules", ".git", ".venv", "venv", ".idea", "dist", "build"}
+        for root, dirs, files in os.walk(str(target)):
+            dirs[:] = [d for d in dirs if d not in skip_dirs]
+            for fname in files:
+                if file_pattern:
+                    import fnmatch
+                    if not fnmatch.fnmatch(fname, file_pattern):
+                        continue
+                _search_in_file(Path(root) / fname)
+                if len(results) >= max_results:
+                    break
+            if len(results) >= max_results:
+                break
+    else:
+        return f"错误：路径不存在 '{args.get('path', '.')}'"
+
+    if not results:
+        return f"未找到匹配 '{pattern}' 的内容"
+    header = f"找到 {len(results)} 处匹配："
+    return header + "\n" + "\n".join(results)
+
+
+def _get_diagnostics(args: dict, working_dir: str) -> str:
+    """获取文件的编译器/linter 报错。"""
+    file_path = _resolve_path(args["path"], working_dir)
+
+    if not file_path.exists():
+        return f"错误：文件不存在 '{args['path']}'"
+    if not file_path.is_file():
+        return f"错误：'{args['path']}' 不是一个文件"
+
+    ext = file_path.suffix.lower()
+
+    # 根据文件类型选择检查命令
+    check_commands = {
+        ".py": ["python", "-m", "py_compile", str(file_path)],
+        ".js": ["node", "--check", str(file_path)],
+        ".ts": ["npx", "tsc", "--noEmit", str(file_path)],
+        ".java": ["javac", "-d", str(file_path.parent), str(file_path)],
+    }
+
+    cmd = check_commands.get(ext)
+    if cmd is None:
+        return f"不支持的文件类型 '{ext}'。支持的类型：{', '.join(check_commands.keys())}"
+
+    # 检查工具是否可用
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=Config.COMMAND_TIMEOUT,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        return f"错误：未找到 '{cmd[0]}'，请确认已安装并加入 PATH"
+    except subprocess.TimeoutExpired:
+        return f"错误：检查超时 ({Config.COMMAND_TIMEOUT} 秒)"
+
+    if result.returncode == 0:
+        return f"文件 '{args['path']}' 无报错，检查通过。"
+
+    output_parts = []
+    if result.stdout:
+        output_parts.append(result.stdout.strip())
+    if result.stderr:
+        output_parts.append(result.stderr.strip())
+    output = "\n".join(output_parts)
+
+    if len(output) > 10000:
+        output = output[:10000] + "\n... [报错信息已截断] ..."
+    return output
+
+
+# 各语言的符号提取正则
+_SYMBOL_PATTERNS = {
+    ".py": [
+        ("function", re.compile(r"^def\s+(\w+)\s*\(", re.MULTILINE)),
+        ("class", re.compile(r"^class\s+(\w+)", re.MULTILINE)),
+        ("variable", re.compile(r"^([A-Z_][A-Z_0-9]*)\s*=", re.MULTILINE)),
+    ],
+    ".js": [
+        ("function", re.compile(r"(?:^|\s)(?:async\s+)?function\s+(\w+)", re.MULTILINE)),
+        ("function", re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>", re.MULTILINE)),
+        ("class", re.compile(r"^class\s+(\w+)", re.MULTILINE)),
+        ("variable", re.compile(r"^(?:const|let|var)\s+([A-Z_][A-Z_0-9]*)\s*=", re.MULTILINE)),
+    ],
+    ".ts": [
+        ("function", re.compile(r"(?:^|\s)(?:async\s+)?function\s+(\w+)", re.MULTILINE)),
+        ("function", re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|\w+)\s*=>", re.MULTILINE)),
+        ("class", re.compile(r"^(?:export\s+)?class\s+(\w+)", re.MULTILINE)),
+        ("interface", re.compile(r"^(?:export\s+)?interface\s+(\w+)", re.MULTILINE)),
+        ("type", re.compile(r"^(?:export\s+)?type\s+(\w+)", re.MULTILINE)),
+        ("variable", re.compile(r"^(?:const|let|var)\s+([A-Z_][A-Z_0-9]*)\s*=", re.MULTILINE)),
+    ],
+    ".java": [
+        ("class", re.compile(r"(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?class\s+(\w+)", re.MULTILINE)),
+        ("interface", re.compile(r"(?:public|private|protected)?\s*interface\s+(\w+)", re.MULTILINE)),
+        ("function", re.compile(r"(?:public|private|protected)[\s\w]*\s+(\w+)\s*\(", re.MULTILINE)),
+    ],
+    ".c": [
+        ("function", re.compile(r"^\w[\w\s\*]+\s+(\w+)\s*\([^)]*\)\s*\{", re.MULTILINE)),
+        ("variable", re.compile(r"^#define\s+(\w+)", re.MULTILINE)),
+        ("type", re.compile(r"^(?:typedef\s+)?(?:struct|enum|union)\s+(\w+)", re.MULTILINE)),
+    ],
+    ".cpp": [
+        ("function", re.compile(r"^\w[\w\s\*:]+\s+(\w+)\s*\([^)]*\)\s*(?:const\s*)?\{", re.MULTILINE)),
+        ("class", re.compile(r"^class\s+(\w+)", re.MULTILINE)),
+        ("variable", re.compile(r"^#define\s+(\w+)", re.MULTILINE)),
+        ("type", re.compile(r"^(?:typedef\s+)?(?:struct|enum|union|class)\s+(\w+)", re.MULTILINE)),
+    ],
+}
+# 让 .jsx/.tsx 复用 .js/.ts 的规则
+_SYMBOL_PATTERNS[".jsx"] = _SYMBOL_PATTERNS[".js"]
+_SYMBOL_PATTERNS[".tsx"] = _SYMBOL_PATTERNS[".ts"]
+_SYMBOL_PATTERNS[".cc"] = _SYMBOL_PATTERNS[".cpp"]
+_SYMBOL_PATTERNS[".h"] = _SYMBOL_PATTERNS[".c"]
+_SYMBOL_PATTERNS[".hpp"] = _SYMBOL_PATTERNS[".cpp"]
+
+
+def _list_symbols(args: dict, working_dir: str) -> str:
+    """列出文件中定义的符号。"""
+    file_path = _resolve_path(args["path"], working_dir)
+
+    if not file_path.exists():
+        return f"错误：文件不存在 '{args['path']}'"
+    if not file_path.is_file():
+        return f"错误：'{args['path']}' 不是一个文件"
+
+    ext = file_path.suffix.lower()
+    patterns = _SYMBOL_PATTERNS.get(ext)
+    if patterns is None:
+        supported = ", ".join(sorted(_SYMBOL_PATTERNS.keys()))
+        return f"不支持的文件类型 '{ext}'。支持的类型：{supported}"
+
+    content = file_path.read_text(encoding="utf-8", errors="replace")
+    lines = content.splitlines()
+
+    symbols = []  # (kind, name, line_number)
+    for kind, regex in patterns:
+        for m in regex.finditer(content):
+            name = m.group(1)
+            line_num = content[:m.start()].count("\n") + 1
+            symbols.append((kind, name, line_num))
+
+    if not symbols:
+        return f"文件 '{args['path']}' 中未检测到符号定义"
+
+    # 按行号排序
+    symbols.sort(key=lambda x: x[2])
+
+    # 格式化输出
+    kind_labels = {
+        "class": "CLASS",
+        "function": "FUNC ",
+        "variable": "VAR  ",
+        "interface": "IFACE",
+        "type": "TYPE ",
+    }
+    result_lines = [f"文件: {file_path.name}  ({ext}  {len(lines)} 行)"]
+    result_lines.append("-" * 50)
+    for kind, name, line_num in symbols:
+        label = kind_labels.get(kind, kind.upper()[:5])
+        result_lines.append(f"  L{line_num:<6} [{label}] {name}")
+
+    return "\n".join(result_lines)
+
+
+def _get_workdir(args: dict, working_dir: str) -> str:
+    """返回当前工作目录。"""
+    wd = Path(working_dir).resolve()
+    entries = []
+    try:
+        for e in sorted(wd.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            tag = "[DIR] " if e.is_dir() else "[FILE]"
+            entries.append(f"  {tag} {e.name}")
+    except PermissionError:
+        entries.append("  [权限不足]")
+
+    return f"当前工作目录: {wd}\n\n目录内容：\n" + "\n".join(entries)
