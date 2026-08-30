@@ -1,0 +1,6 @@
+# 环境与密钥文件 - 绝不提交
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
