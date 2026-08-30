@@ -138,6 +138,9 @@ class CodingAgent:
         self.messages.append({"role": "user", "content": task})
 
         for iteration in range(1, Config.MAX_ITERATIONS + 1):
+            # ---- 上下文压缩：消息过多时压缩早期历史 ----
+            self._compress_history()
+
             step_start = time.time()
             step_log = StepLog(step=iteration, role="assistant")
 
@@ -275,6 +278,76 @@ class CodingAgent:
             tools=TOOL_SCHEMAS,
             tool_choice="auto",
         )
+
+    def _compress_history(self):
+        """
+        上下文压缩：当消息数超过阈值时，将最早的若干条可压缩消息合并为一条 history 消息。
+
+        规则：
+        - system 和 user 消息永不压缩
+        - history 消息默认不压缩，除非最早的可压缩消息全是 history
+        - 每次压缩 COMPRESS_COUNT 条消息
+        """
+        if len(self.messages) <= Config.COMPRESS_THRESHOLD:
+            return
+
+        n = Config.COMPRESS_COUNT
+
+        # 跳过 system 消息（始终保留在 index 0）
+        start = 1 if self.messages and self.messages[0]["role"] == "system" else 0
+
+        # 从 start 开始扫描，跳过 user 消息，收集前 n 条可压缩消息
+        compressible_indices = []
+        for i in range(start, len(self.messages)):
+            if self.messages[i]["role"] == "user":
+                continue
+            compressible_indices.append(i)
+            if len(compressible_indices) == n:
+                break
+
+        # 不足 n 条可压缩消息，无需压缩
+        if len(compressible_indices) < n:
+            return
+
+        # 检查是否全是 history 消息
+        all_history = all(
+            self.messages[i]["role"] == "history" for i in compressible_indices
+        )
+        if not all_history:
+            return  # 含 assistant/tool 消息，暂不压缩
+
+        # ---- 执行压缩 ----
+        compressible_msgs = [self.messages[i] for i in compressible_indices]
+
+        # 构建压缩摘要
+        summary_parts = []
+        for msg in compressible_msgs:
+            content = msg.get("content", "")
+            if content:
+                summary_parts.append(content)
+
+        merged_content = "\n---\n".join(summary_parts)
+        history_msg = {
+            "role": "history",
+            "content": f"[历史压缩] 以下是之前已完成工作的记录摘要：\n\n{merged_content}",
+        }
+
+        # 重建消息列表：
+        # system + 原有 user 消息 + 压缩后的 history + 剩余消息
+        first_idx = compressible_indices[0]
+        last_idx = compressible_indices[-1]
+
+        # 被压缩块之前的 user 消息（保留）
+        pre_user_msgs = [
+            self.messages[i] for i in range(start, first_idx)
+            if self.messages[i]["role"] == "user"
+        ]
+
+        # 被压缩块之后的所有消息（保留）
+        remaining_msgs = [self.messages[i] for i in range(last_idx + 1, len(self.messages))]
+
+        # 重建：system + pre_user + history + remaining
+        self.messages = [self.messages[0]] + pre_user_msgs + [history_msg] + remaining_msgs
 
     def reset(self):
         """重置对话历史和计划状态。"""
