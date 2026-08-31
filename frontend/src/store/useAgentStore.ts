@@ -36,8 +36,8 @@ interface AgentStore {
   terminalEntries: TerminalEntry[];
   terminalOpen: boolean;
 
-  // ---- 高亮 ----
-  highlightLines: { start: number; end: number } | null;
+  // ---- diff 装饰 ----
+  diffDecorations: { line: number; type: 'added' | 'removed' }[];
 
   // ---- 错误 ----
   error: string | null;
@@ -66,7 +66,7 @@ interface AgentStore {
   toggleTerminal: () => void;
 
   clearError: () => void;
-  setHighlightLines: (lines: { start: number; end: number } | null) => void;
+  setDiffDecorations: (decorations: { line: number; type: 'added' | 'removed' }[]) => void;
 }
 
 // ============================================================
@@ -97,7 +97,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   terminalOpen: false,
   error: null,
   plan: null,
-  highlightLines: null,
+  diffDecorations: [],
 
   // ============================================================
   // 初始化：仅检测后端连接，不加载文件树
@@ -155,7 +155,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       pendingConfirmations: [],
       terminalEntries: [],
       terminalOpen: false,
-      highlightLines: null,
+      diffDecorations: [],
       error: null,
       plan: null,
     });
@@ -204,11 +204,12 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     });
   },
 
-  setActiveFile: (path: string | null) => set({ activeFile: path }),
+  setActiveFile: (path: string | null) => set({ activeFile: path, diffDecorations: [] }),
 
   // ============================================================
-  // 发送消息 → 启动任务
+  // 计算行级 diff（LCS 算法）
   // ============================================================
+
   sendMessage: async (text: string) => {
     const { workingDir, messages } = get();
 
@@ -248,24 +249,19 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         const task = await api.fetchTask(taskId);
         const newMessages = [...messages];
 
-        // 处理新的 step logs：为每个工具调用生成消息
+        // 处理新的 step logs：为非文件修改工具生成消息
         const stepLogs = task.step_logs || [];
         if (stepLogs.length > processedStepCount) {
           for (let i = processedStepCount; i < stepLogs.length; i++) {
             const step = stepLogs[i];
             for (const tc of step.tool_calls) {
-              // 文件修改工具已通过确认流程显示，跳过重复
-              if (tc.name === 'write_file' || tc.name === 'search_replace') {
-                continue;
-              }
-              // 跳过计划管理工具（不单独显示）
-              if (['create_plan', 'update_step', 'finish_task'].includes(tc.name)) {
-                continue;
-              }
+              // 文件修改工具通过确认流程显示，跳过重复
+              if (tc.name === 'write_file' || tc.name === 'search_replace') continue;
+              // 跳过计划管理工具
+              if (['create_plan', 'update_step', 'finish_task'].includes(tc.name)) continue;
+
               let args: Record<string, unknown> = {};
-              try {
-                args = JSON.parse(tc.args);
-              } catch { /* ignore */ }
+              try { args = JSON.parse(tc.args); } catch { /* ignore */ }
               const resultInfo = step.tool_results?.find((r) => r.tool === tc.name);
               newMessages.push({
                 id: `tc-${tc.id}`,
@@ -286,7 +282,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           set({ plan: task.plan });
         }
 
-        // 处理确认请求
+        // 处理确认请求：打开文件并计算红绿 diff 装饰
         if (task.status === 'waiting_confirm' && task.pending_confirmations) {
           const existing = get().pendingConfirmations;
           const newConfs = task.pending_confirmations.filter(
@@ -302,33 +298,40 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
               toolArgs: conf.args,
             });
 
-            // 自动打开被修改的文件并计算高亮行范围
+            // 自动打开被修改的文件并计算红绿 diff
             const filePath = String(conf.args.path || conf.args.file_path || '');
             if (filePath) {
               await get().openFile(filePath);
               const state = get();
               const fileData = state.openFiles.get(filePath);
-              let lines: { start: number; end: number } | null = null;
+              if (fileData) {
+                let originalContent: string;
+                let modifiedContent: string;
 
-              if (conf.tool === 'search_replace' && fileData) {
-                const oldText = (conf.args.old_text as string) || '';
-                if (oldText) {
-                  const idx = fileData.content.indexOf(oldText);
-                  if (idx >= 0) {
-                    const start = fileData.content.substring(0, idx).split('\n').length;
-                    const end = start + oldText.split('\n').length - 1;
-                    lines = { start, end };
+                if (conf.tool === 'search_replace') {
+                  const oldText = (conf.args.old_text as string) || '';
+                  const newText = (conf.args.new_text as string) || '';
+                  originalContent = fileData.content;
+                  modifiedContent = originalContent.replace(oldText, newText);
+                } else {
+                  // write_file
+                  originalContent = fileData.content;
+                  modifiedContent = (conf.args.content as string) || '';
+                  if (!originalContent && modifiedContent) {
+                    // 新文件：全部标记为新增
+                    const lines = modifiedContent.split('\n').length;
+                    const decorations = Array.from({ length: lines }, (_, i) => ({
+                      line: i + 1,
+                      type: 'added' as const,
+                    }));
+                    set({ diffDecorations: decorations });
+                    continue;
                   }
                 }
-              } else if (conf.tool === 'write_file') {
-                const newContent = (conf.args.content as string) || '';
-                if (newContent && (!fileData || !fileData.content)) {
-                  // 新文件：高亮全部行
-                  lines = { start: 1, end: newContent.split('\n').length };
-                }
-              }
 
-              set({ highlightLines: lines });
+                const decorations = computeLineDiff(originalContent, modifiedContent);
+                set({ diffDecorations: decorations });
+              }
             }
           }
           set({
@@ -470,5 +473,42 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
   clearError: () => set({ error: null }),
 
-  setHighlightLines: (lines) => set({ highlightLines: lines }),
+  setDiffDecorations: (decorations) => set({ diffDecorations: decorations }),
 }));
+
+// ============================================================
+// LCS 行级 diff 算法
+// ============================================================
+
+function computeLineDiff(originalContent: string, modifiedContent: string): { line: number; type: 'added' | 'removed' }[] {
+  const origLines = originalContent.split('\n');
+  const modLines = modifiedContent.split('\n');
+  const m = origLines.length;
+  const n = modLines.length;
+
+  // LCS 动态规划
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = origLines[i - 1] === modLines[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  // 回溯生成 diff
+  const result: { line: number; type: 'added' | 'removed' }[] = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && origLines[i - 1] === modLines[j - 1]) {
+      i--; j--; // 匹配行，跳过
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      result.push({ line: j, type: 'added' });
+      j--;
+    } else {
+      result.push({ line: i, type: 'removed' });
+      i--;
+    }
+  }
+  return result.reverse();
+}

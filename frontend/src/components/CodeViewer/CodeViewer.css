@@ -84,13 +84,22 @@
   overflow: hidden;
 }
 
-/* ---- 修改行高亮 ---- */
+/* ---- 修改行高亮（红绿 diff） ---- */
 
-.highlighted-line {
-  background: rgba(255, 200, 0, 0.12);
+.diff-line-added {
+  background: rgba(46, 160, 67, 0.15);
 }
-.highlighted-line-glyph {
-  background: rgba(255, 180, 0, 0.6);
+.diff-line-added-glyph {
+  background: rgba(46, 160, 67, 0.8);
+  width: 3px !important;
+  margin-left: 3px;
+}
+
+.diff-line-removed {
+  background: rgba(248, 81, 73, 0.15);
+}
+.diff-line-removed-glyph {
+  background: rgba(248, 81, 73, 0.8);
   width: 3px !important;
   margin-left: 3px;
 }

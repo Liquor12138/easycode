@@ -458,7 +458,7 @@ class CodingAgent:
 
         # 检查 1：完全相同的调用（工具名+参数都一样）
         if len(recent_calls) >= _REPEAT_THRESHOLD:
-            current = (tool_calls[0].function.name, tool_calls[0].function.arguments)
+            current = (tool_calls[0]["name"], tool_calls[0]["args"])
             if all(c == current for c in recent_calls[:_REPEAT_THRESHOLD]):
                 return (
                     "⚠️ 系统检测：你最近连续多次执行了完全相同的工具调用，陷入了重复循环。"
@@ -468,7 +468,7 @@ class CodingAgent:
 
         # 检查 2：相同工具名（参数不同但工具一样，如反复 read_file 同一个文件）
         if len(recent_tool_names) >= _REPEAT_TOOL_THRESHOLD:
-            current_name = tool_calls[0].function.name
+            current_name = tool_calls[0]["name"]
             if all(n == current_name for n in recent_tool_names[:_REPEAT_TOOL_THRESHOLD]):
                 return (
                     f"⚠️ 系统检测：你已连续 {_REPEAT_TOOL_THRESHOLD} 次调用 `{current_name}` 工具，"
