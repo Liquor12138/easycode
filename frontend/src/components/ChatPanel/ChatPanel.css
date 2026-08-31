@@ -149,10 +149,24 @@
   border-bottom-left-radius: 2px;
   font-size: 12px;
   width: 100%;
+  border-left: 3px solid #555;
 }
+
+/* ---- 工具类型颜色 ---- */
+.tool-bubble.tool-blue    { border-left-color: #4a9eff; background: #1e2536; }
+.tool-bubble.tool-green   { border-left-color: #4caf50; background: #1e2a1e; }
+.tool-bubble.tool-orange  { border-left-color: #ff9800; background: #2a2518; }
+.tool-bubble.tool-cyan    { border-left-color: #00bcd4; background: #1a2a2e; }
+.tool-bubble.tool-purple  { border-left-color: #ab47bc; background: #261e30; }
+.tool-bubble.tool-magenta { border-left-color: #e91e63; background: #2a1a22; }
+.tool-bubble.tool-yellow  { border-left-color: #ffc107; background: #2a2818; }
+.tool-bubble.tool-teal    { border-left-color: #26a69a; background: #1a2a28; }
+.tool-bubble.tool-gray    { border-left-color: #78909c; background: #222528; }
+
 .tool-message.rejected .tool-bubble {
   background: #3a2020;
   color: #d0a0a0;
+  border-left-color: #5c1a1a;
 }
 
 .tool-call-header {
@@ -168,6 +182,17 @@
   font-weight: 600;
   color: #9090c0;
 }
+
+/* 消息气泡中工具名称颜色 */
+.tool-bubble.tool-blue    .tool-name { color: #4a9eff; }
+.tool-bubble.tool-green   .tool-name { color: #4caf50; }
+.tool-bubble.tool-orange  .tool-name { color: #ff9800; }
+.tool-bubble.tool-cyan    .tool-name { color: #00bcd4; }
+.tool-bubble.tool-purple  .tool-name { color: #ab47bc; }
+.tool-bubble.tool-magenta .tool-name { color: #e91e63; }
+.tool-bubble.tool-yellow  .tool-name { color: #ffc107; }
+.tool-bubble.tool-teal    .tool-name { color: #26a69a; }
+.tool-bubble.tool-gray    .tool-name { color: #78909c; }
 .tool-rejected-badge {
   font-size: 10px;
   background: #5c1a1a;
@@ -188,6 +213,48 @@
   color: #888;
   border-top: 1px solid #333;
   padding-top: 4px;
+}
+
+/* ---- 命令执行展示 ---- */
+.tool-command-block {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin: 4px 0;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+.tool-command-prompt {
+  color: #4caf50;
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.tool-command-text {
+  color: #e0e0e0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: none;
+  padding: 0;
+}
+.tool-command-output {
+  background: #1a1a1a;
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-top: 4px;
+}
+.tool-result-pre {
+  margin: 0;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 11px;
+  color: #aaa;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .message-time {
@@ -229,10 +296,23 @@
 .tool-call-card {
   background: #252536;
   border: 1px solid #333;
+  border-left: 3px solid #555;
   border-radius: 6px;
   margin: 4px 0;
   font-size: 12px;
 }
+
+/* 工具卡片颜色 */
+.tool-call-card.tool-blue    { border-left-color: #4a9eff; }
+.tool-call-card.tool-green   { border-left-color: #4caf50; }
+.tool-call-card.tool-orange  { border-left-color: #ff9800; }
+.tool-call-card.tool-cyan    { border-left-color: #00bcd4; }
+.tool-call-card.tool-purple  { border-left-color: #ab47bc; }
+.tool-call-card.tool-magenta { border-left-color: #e91e63; }
+.tool-call-card.tool-yellow  { border-left-color: #ffc107; }
+.tool-call-card.tool-teal    { border-left-color: #26a69a; }
+.tool-call-card.tool-gray    { border-left-color: #78909c; }
+
 .tool-call-card.rejected {
   border-color: #5c1a1a;
 }
@@ -256,6 +336,17 @@
   color: #9090c0;
   flex: 1;
 }
+
+/* 工具卡片名称颜色 */
+.tool-call-card.tool-blue    .tool-card-name { color: #4a9eff; }
+.tool-call-card.tool-green   .tool-card-name { color: #4caf50; }
+.tool-call-card.tool-orange  .tool-card-name { color: #ff9800; }
+.tool-call-card.tool-cyan    .tool-card-name { color: #00bcd4; }
+.tool-call-card.tool-purple  .tool-card-name { color: #ab47bc; }
+.tool-call-card.tool-magenta .tool-card-name { color: #e91e63; }
+.tool-call-card.tool-yellow  .tool-card-name { color: #ffc107; }
+.tool-call-card.tool-teal    .tool-card-name { color: #26a69a; }
+.tool-call-card.tool-gray    .tool-card-name { color: #78909c; }
 .tool-card-rejected {
   font-size: 10px;
   color: #f99;
