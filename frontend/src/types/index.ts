@@ -24,7 +24,7 @@ export interface FileContent {
 // 任务 & Agent
 // ============================================================
 
-export type TaskStatus = 'pending' | 'running' | 'waiting_confirm' | 'completed' | 'failed';
+export type TaskStatus = 'pending' | 'running' | 'waiting_confirm' | 'completed' | 'failed' | 'stopped';
 
 export interface ToolCallInfo {
   id: string;

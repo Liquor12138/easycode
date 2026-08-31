@@ -84,6 +84,17 @@
   overflow: hidden;
 }
 
+/* ---- 修改行高亮 ---- */
+
+.highlighted-line {
+  background: rgba(255, 200, 0, 0.12);
+}
+.highlighted-line-glyph {
+  background: rgba(255, 180, 0, 0.6);
+  width: 3px !important;
+  margin-left: 3px;
+}
+
 /* ---- Diff viewer ---- */
 
 .diff-viewer {

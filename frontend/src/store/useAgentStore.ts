@@ -36,6 +36,9 @@ interface AgentStore {
   terminalEntries: TerminalEntry[];
   terminalOpen: boolean;
 
+  // ---- 高亮 ----
+  highlightLines: { start: number; end: number } | null;
+
   // ---- 错误 ----
   error: string | null;
 
@@ -55,6 +58,7 @@ interface AgentStore {
   sendMessage: (text: string) => Promise<void>;
   pollTaskStatus: () => void;
   stopPolling: () => void;
+  stopTask: () => Promise<void>;
 
   confirmChange: (confId: string, approved: boolean, reason?: string) => Promise<void>;
 
@@ -62,6 +66,7 @@ interface AgentStore {
   toggleTerminal: () => void;
 
   clearError: () => void;
+  setHighlightLines: (lines: { start: number; end: number } | null) => void;
 }
 
 // ============================================================
@@ -92,6 +97,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   terminalOpen: false,
   error: null,
   plan: null,
+  highlightLines: null,
 
   // ============================================================
   // 初始化：仅检测后端连接，不加载文件树
@@ -149,6 +155,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       pendingConfirmations: [],
       terminalEntries: [],
       terminalOpen: false,
+      highlightLines: null,
       error: null,
       plan: null,
     });
@@ -294,6 +301,35 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
               toolName: conf.tool,
               toolArgs: conf.args,
             });
+
+            // 自动打开被修改的文件并计算高亮行范围
+            const filePath = String(conf.args.path || conf.args.file_path || '');
+            if (filePath) {
+              await get().openFile(filePath);
+              const state = get();
+              const fileData = state.openFiles.get(filePath);
+              let lines: { start: number; end: number } | null = null;
+
+              if (conf.tool === 'search_replace' && fileData) {
+                const oldText = (conf.args.old_text as string) || '';
+                if (oldText) {
+                  const idx = fileData.content.indexOf(oldText);
+                  if (idx >= 0) {
+                    const start = fileData.content.substring(0, idx).split('\n').length;
+                    const end = start + oldText.split('\n').length - 1;
+                    lines = { start, end };
+                  }
+                }
+              } else if (conf.tool === 'write_file') {
+                const newContent = (conf.args.content as string) || '';
+                if (newContent && (!fileData || !fileData.content)) {
+                  // 新文件：高亮全部行
+                  lines = { start: 1, end: newContent.split('\n').length };
+                }
+              }
+
+              set({ highlightLines: lines });
+            }
           }
           set({
             agentStatus: 'waiting_confirm',
@@ -331,6 +367,18 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           set({ messages: newMessages, agentStatus: 'failed' });
           get().stopPolling();
         }
+
+        // 任务被停止
+        if (task.status === 'stopped') {
+          newMessages.push({
+            id: `stopped-${Date.now()}`,
+            role: 'system',
+            content: '任务已被手动停止。',
+            timestamp: Date.now(),
+          });
+          set({ messages: newMessages, agentStatus: 'stopped' });
+          get().stopPolling();
+        }
       } catch {
         // 轮询失败时静默重试
       }
@@ -341,6 +389,22 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
+    }
+  },
+
+  // ============================================================
+  // 停止任务
+  // ============================================================
+  stopTask: async () => {
+    const { taskId } = get();
+    if (!taskId) return;
+
+    try {
+      await api.stopTask(taskId);
+      get().stopPolling();
+      set({ agentStatus: 'stopped' });
+    } catch (e: unknown) {
+      set({ error: `停止任务失败: ${(e as Error).message}` });
     }
   },
 
@@ -405,4 +469,6 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
 
   clearError: () => set({ error: null }),
+
+  setHighlightLines: (lines) => set({ highlightLines: lines }),
 }));

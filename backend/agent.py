@@ -9,6 +9,7 @@ Agent 核心循环模块
 
 import json
 import time
+import threading
 from dataclasses import dataclass, field
 from typing import Optional, Callable
 
@@ -16,6 +17,11 @@ from openai import OpenAI
 
 from config import Config
 from tools import TOOL_SCHEMAS, execute_tool
+
+# 重复检测：连续 N 次调用相同工具（相同参数）时注入提醒
+_REPEAT_THRESHOLD = 5
+# 重复检测：连续 N 次调用相同工具名（不论参数）时注入提醒
+_REPEAT_TOOL_THRESHOLD = 8
 
 
 # ============================================================
@@ -106,6 +112,7 @@ class CodingAgent:
         working_dir: str,
         on_step: Optional[Callable] = None,
         on_confirm: Optional[Callable] = None,
+        cancel_event: Optional[threading.Event] = None,
     ):
         """
         Args:
@@ -113,6 +120,7 @@ class CodingAgent:
             on_step:     每完成一步后的回调函数，接收 StepLog，用于实时推送
             on_confirm:  文件修改确认回调，接收 dict(tool, args, preview)，
                          返回 dict(approved: bool)。若为 None 则自动批准。
+            cancel_event: 取消信号，外部通过 set() 通知 Agent 停止。
         """
         if not Config.validate():
             raise RuntimeError(
@@ -122,6 +130,7 @@ class CodingAgent:
         self.working_dir = working_dir
         self.on_step = on_step
         self.on_confirm = on_confirm
+        self.cancel_event = cancel_event
 
         # 计划状态（由 create_plan / update_step / finish_task 工具读写）
         self.plan_state: dict = {}
@@ -152,6 +161,17 @@ class CodingAgent:
         self.messages.append({"role": "user", "content": task})
 
         for iteration in range(1, Config.MAX_ITERATIONS + 1):
+            # ---- 取消检查 ----
+            if self.cancel_event and self.cancel_event.is_set():
+                total_ms = int((time.time() - start_time) * 1000)
+                return AgentResult(
+                    success=False,
+                    final_answer="用户已手动停止任务。",
+                    steps=steps,
+                    total_steps=len(steps),
+                    total_duration_ms=total_ms,
+                )
+
             # ---- 上下文压缩：消息过多时压缩早期历史 ----
             self._compress_history()
 
@@ -186,6 +206,9 @@ class CodingAgent:
                     {"id": tc.id, "name": tc.function.name, "args": tc.function.arguments}
                     for tc in message.tool_calls
                 ]
+
+                # ---- 重复检测：检测 Agent 是否陷入死循环 ----
+                nudge = self._check_repetition(step_log.tool_calls)
 
                 # 将 assistant 消息（含 tool_calls）加入历史
                 self.messages.append({
@@ -258,6 +281,13 @@ class CodingAgent:
                     # 检测 finish_task：模型主动结束任务
                     if tool_name == "finish_task":
                         finish_called = True
+
+                # 如果检测到重复调用，注入提醒消息
+                if nudge:
+                    self.messages.append({
+                        "role": "user",
+                        "content": nudge,
+                    })
 
                 step_log.duration_ms = int((time.time() - step_start) * 1000)
                 steps.append(step_log)
@@ -404,6 +434,49 @@ class CodingAgent:
             preview += f"+ 替换为 ({len(new)} 字符):\n{new[:200]}"
             return preview
         return f"{tool_name}: {args}"
+
+    def _check_repetition(self, tool_calls: list) -> str:
+        """
+        检测 Agent 是否陷入重复调用的死循环。
+        如果最近连续多次调用相同的工具（相同名称+参数）或相同工具名，
+        返回一段提醒文本供注入对话历史；否则返回空字符串。
+        """
+        if not tool_calls:
+            return ""
+
+        # 从对话历史中提取最近若干轮的工具调用记录
+        recent_calls = []  # (tool_name, arguments_str)
+        recent_tool_names = []  # tool_name only
+        for msg in reversed(self.messages):
+            if msg["role"] == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    fn = tc.get("function", {})
+                    recent_calls.append((fn.get("name", ""), fn.get("arguments", "")))
+                    recent_tool_names.append(fn.get("name", ""))
+                if len(recent_calls) >= max(_REPEAT_THRESHOLD, _REPEAT_TOOL_THRESHOLD) + 2:
+                    break
+
+        # 检查 1：完全相同的调用（工具名+参数都一样）
+        if len(recent_calls) >= _REPEAT_THRESHOLD:
+            current = (tool_calls[0].function.name, tool_calls[0].function.arguments)
+            if all(c == current for c in recent_calls[:_REPEAT_THRESHOLD]):
+                return (
+                    "⚠️ 系统检测：你最近连续多次执行了完全相同的工具调用，陷入了重复循环。"
+                    "请立即停止当前操作，换一种方式推进任务，或者直接跳到计划的下一个步骤。"
+                    "不要再次调用相同的工具。"
+                )
+
+        # 检查 2：相同工具名（参数不同但工具一样，如反复 read_file 同一个文件）
+        if len(recent_tool_names) >= _REPEAT_TOOL_THRESHOLD:
+            current_name = tool_calls[0].function.name
+            if all(n == current_name for n in recent_tool_names[:_REPEAT_TOOL_THRESHOLD]):
+                return (
+                    f"⚠️ 系统检测：你已连续 {_REPEAT_TOOL_THRESHOLD} 次调用 `{current_name}` 工具，"
+                    "但没有取得实质进展。请停止重复，换一种方法或直接推进到计划的下一步。"
+                    "如果你已经获取了足够信息，请立即开始编写代码。"
+                )
+
+        return ""
 
     def reset(self):
         """重置对话历史和计划状态。"""

@@ -48,6 +48,33 @@
   padding: 2px 8px;
   border-radius: 8px;
 }
+.chat-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-stop-btn {
+  padding: 2px 10px;
+  font-size: 11px;
+  background: #5c1a1a;
+  color: #f99;
+  border: 1px solid #7a2a2a;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.chat-stop-btn:hover {
+  background: #7a2a2a;
+  color: #fcc;
+}
+.chat-stopped-indicator {
+  font-size: 11px;
+  color: #f99;
+  background: #3a1a1a;
+  padding: 2px 8px;
+  border-radius: 8px;
+}
 
 /* ---- 消息列表 ---- */
 

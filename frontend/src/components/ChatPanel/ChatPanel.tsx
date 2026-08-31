@@ -5,7 +5,7 @@ import PlanProgress from './PlanProgress';
 import './ChatPanel.css';
 
 export default function ChatPanel() {
-  const { messages, agentStatus, sendMessage, pendingConfirmations, plan } = useAgentStore();
+  const { messages, agentStatus, sendMessage, pendingConfirmations, plan, stopTask } = useAgentStore();
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -39,10 +39,18 @@ export default function ChatPanel() {
       <div className="chat-status-bar">
         <span className="chat-status-label">对话</span>
         {isRunning && (
-          <span className="chat-running-indicator">
-            <span className="running-dot" />
-            Agent 运行中
-          </span>
+          <div className="chat-status-actions">
+            <span className="chat-running-indicator">
+              <span className="running-dot" />
+              Agent 运行中
+            </span>
+            <button className="chat-stop-btn" onClick={() => stopTask()} title="停止任务">
+              ■ 停止
+            </button>
+          </div>
+        )}
+        {agentStatus === 'stopped' && (
+          <span className="chat-stopped-indicator">已停止</span>
         )}
         {hasPendingConf && (
           <span className="chat-confirm-indicator">

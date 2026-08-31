@@ -81,6 +81,12 @@ export function respondConfirmation(
   });
 }
 
+export function stopTask(taskId: string): Promise<{ message: string; task_id: string }> {
+  return request(`/stop/${taskId}`, {
+    method: 'POST',
+  });
+}
+
 // ============================================================
 // 终端
 // ============================================================

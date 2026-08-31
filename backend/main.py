@@ -67,13 +67,14 @@ class Confirmation:
 class TaskState:
     """一个 Agent 任务的完整状态。"""
     id: str
-    status: str = "pending"          # pending / running / waiting_confirm / completed / failed
+    status: str = "pending"          # pending / running / waiting_confirm / completed / failed / stopped
     task_text: str = ""
     working_dir: str = ""
     result: Optional[dict] = None
     step_logs: list = field(default_factory=list)
     confirmations: list = field(default_factory=list)  # List[Confirmation]
     error: str = ""
+    cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
 # 任务存储：task_id -> TaskState
@@ -160,19 +161,33 @@ def _run_agent_background(task: TaskState):
             working_dir=task.working_dir,
             on_step=on_step,
             on_confirm=lambda req: _create_confirmation(task, req),
+            cancel_event=task.cancel_event,
         )
         result = agent.run(task.task_text)
 
-        task.result = {
-            "success": result.success,
-            "final_answer": result.final_answer,
-            "steps": task.step_logs,
-            "total_steps": result.total_steps,
-            "total_duration_ms": result.total_duration_ms,
-            "working_dir": task.working_dir,
-            "task": task.task_text,
-        }
-        task.status = "completed"
+        # 检查是否被用户取消
+        if task.cancel_event.is_set():
+            task.status = "stopped"
+            task.result = {
+                "success": False,
+                "final_answer": "用户已手动停止任务。",
+                "steps": task.step_logs,
+                "total_steps": result.total_steps,
+                "total_duration_ms": result.total_duration_ms,
+                "working_dir": task.working_dir,
+                "task": task.task_text,
+            }
+        else:
+            task.result = {
+                "success": result.success,
+                "final_answer": result.final_answer,
+                "steps": task.step_logs,
+                "total_steps": result.total_steps,
+                "total_duration_ms": result.total_duration_ms,
+                "working_dir": task.working_dir,
+                "task": task.task_text,
+            }
+            task.status = "completed"
 
         # 同步到全局历史
         global _last_result
@@ -560,6 +575,30 @@ def pick_folder():
         return {"selected": True, "path": path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"无法打开文件夹选择器: {e}")
+
+
+@app.post("/api/stop/{task_id}")
+def stop_task(task_id: str):
+    """停止正在运行的任务。"""
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    if task.status not in ("running", "pending", "waiting_confirm"):
+        return {"message": "任务已不在运行状态", "status": task.status}
+
+    # 发送取消信号
+    task.cancel_event.set()
+
+    # 如果任务在等待确认，唤醒所有阻塞的确认事件
+    for conf in task.confirmations:
+        if not conf.event.is_set():
+            conf.approved = False
+            conf.reason = "用户已停止任务"
+            conf.event.set()
+
+    task.status = "stopped"
+    return {"message": "已发送停止信号", "task_id": task_id}
 
 
 @app.get("/api/health")
