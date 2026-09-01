@@ -494,7 +494,6 @@ def _execute_command(args: dict, working_dir: str) -> str:
             capture_output=True,
             text=True,
             cwd=str(exec_dir),
-            timeout=Config.COMMAND_TIMEOUT,
             encoding="utf-8",
             errors="replace",
         )
@@ -515,10 +514,6 @@ def _execute_command(args: dict, working_dir: str) -> str:
 
         return output
 
-    except subprocess.TimeoutExpired:
-        raise TimeoutError(
-            f"命令在 {Config.COMMAND_TIMEOUT} 秒内未完成，已终止。"
-        )
     except Exception as e:
         return f"命令执行失败: {e}"
 
