@@ -5,7 +5,11 @@ import { useAgentStore } from '../../store/useAgentStore';
 import './CodeViewer.css';
 
 export default function CodeViewer() {
-  const { openFiles, activeFile, closeFile, setActiveFile, diffDecorations, pendingConfirmations, confirmChange, taskId } = useAgentStore();
+  const {
+    openFiles, activeFile, closeFile, setActiveFile,
+    diffDisplayContent, diffClassifications,
+    pendingConfirmations, confirmChange, taskId,
+  } = useAgentStore();
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const decorationsRef = useRef<string[]>([]);
@@ -15,32 +19,92 @@ export default function CodeViewer() {
   // 当前待确认修改
   const currentConf = pendingConfirmations.length > 0 ? pendingConfirmations[0] : null;
 
-  // 当 diff 装饰或活动文件变化时，更新 Monaco decorations
+  // 是否有活跃的 diff 视图
+  const hasDiff = diffClassifications.length > 0 && diffDisplayContent !== '';
+
+  // 编辑器展示内容：有 diff 时显示合并后的 diff 视图，否则显示原始文件
+  const displayValue = hasDiff ? diffDisplayContent : (activeData?.content ?? '');
+
+  // 当 diff 数据或活动文件变化时，更新 Monaco decorations
   useEffect(() => {
     const ed = editorRef.current;
     const monaco = monacoRef.current;
     if (!ed || !monaco) return;
 
+    // 清除旧装饰
     if (decorationsRef.current.length > 0) {
       decorationsRef.current = ed.deltaDecorations(decorationsRef.current, []);
     }
 
-    if (diffDecorations.length > 0 && activeFile) {
-      const newDecorations: editor.IModelDeltaDecoration[] = diffDecorations.map((d) => ({
-        range: new monaco.Range(d.line, 1, d.line, 1),
-        options: {
-          isWholeLine: true,
-          className: d.type === 'added' ? 'diff-line-added' : 'diff-line-removed',
-          linesDecorationsClassName: d.type === 'added' ? 'diff-line-added-glyph' : 'diff-line-removed-glyph',
-        },
-      }));
-      decorationsRef.current = ed.deltaDecorations([], newDecorations);
-      // 自动滚动到第一个变化行
-      if (diffDecorations.length > 0) {
-        ed.revealLineInCenter(diffDecorations[0].line);
+    if (!hasDiff) return;
+
+    const newDecorations: editor.IModelDeltaDecoration[] = [];
+
+    for (let i = 0; i < diffClassifications.length; i++) {
+      const cls = diffClassifications[i];
+      const lineNum = i + 1; // Monaco 行号从 1 开始
+
+      if (cls.type === 'added') {
+        newDecorations.push({
+          range: new monaco.Range(lineNum, 1, lineNum, 1),
+          options: {
+            isWholeLine: true,
+            className: 'diff-line-added',
+            linesDecorationsClassName: 'diff-line-added-glyph',
+          },
+        });
+      } else if (cls.type === 'removed') {
+        newDecorations.push({
+          range: new monaco.Range(lineNum, 1, lineNum, 1),
+          options: {
+            isWholeLine: true,
+            className: 'diff-line-removed',
+            linesDecorationsClassName: 'diff-line-removed-glyph',
+            inlineClassName: 'diff-line-removed-text',
+          },
+        });
       }
+      // 'unchanged' 行不加装饰
     }
-  }, [diffDecorations, activeFile]);
+
+    decorationsRef.current = ed.deltaDecorations([], newDecorations);
+
+    // 自动滚动到第一个变化行
+    const firstChangeIdx = diffClassifications.findIndex(c => c.type !== 'unchanged');
+    if (firstChangeIdx >= 0) {
+      ed.revealLineInCenter(firstChangeIdx + 1);
+    }
+  }, [diffDisplayContent, diffClassifications, hasDiff]);
+
+  // 当编辑器实际内容变化时（如文件异步加载完成），重新检查并应用 diff 装饰
+  // 解决 diff 状态先于文件内容到达时的竞态条件
+  useEffect(() => {
+    const ed = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!ed || !monaco || !hasDiff) return;
+    // 如果当前编辑器值已经是 diff 内容，说明装饰可能还未应用
+    if (ed.getValue() === diffDisplayContent && decorationsRef.current.length === 0) {
+      const newDecorations: editor.IModelDeltaDecoration[] = [];
+      for (let i = 0; i < diffClassifications.length; i++) {
+        const cls = diffClassifications[i];
+        const lineNum = i + 1;
+        if (cls.type === 'added') {
+          newDecorations.push({
+            range: new monaco.Range(lineNum, 1, lineNum, 1),
+            options: { isWholeLine: true, className: 'diff-line-added', linesDecorationsClassName: 'diff-line-added-glyph' },
+          });
+        } else if (cls.type === 'removed') {
+          newDecorations.push({
+            range: new monaco.Range(lineNum, 1, lineNum, 1),
+            options: { isWholeLine: true, className: 'diff-line-removed', linesDecorationsClassName: 'diff-line-removed-glyph', inlineClassName: 'diff-line-removed-text' },
+          });
+        }
+      }
+      decorationsRef.current = ed.deltaDecorations([], newDecorations);
+      const firstChangeIdx = diffClassifications.findIndex(c => c.type !== 'unchanged');
+      if (firstChangeIdx >= 0) ed.revealLineInCenter(firstChangeIdx + 1);
+    }
+  }, [activeData?.content, hasDiff, diffDisplayContent, diffClassifications]);
 
   // 切换文件时清除 diff 装饰
   useEffect(() => {
@@ -62,6 +126,10 @@ export default function CodeViewer() {
       confirmChange(currentConf.id, false, '用户拒绝此修改');
     }
   };
+
+  // 统计 diff 信息
+  const addedCount = diffClassifications.filter(c => c.type === 'added').length;
+  const removedCount = diffClassifications.filter(c => c.type === 'removed').length;
 
   if (openFiles.size === 0) {
     return (
@@ -98,13 +166,22 @@ export default function CodeViewer() {
         ))}
       </div>
 
-      {/* 确认栏：显示待确认修改信息 */}
+      {/* 确认信息栏 */}
       {currentConf && (
-        <div className="diff-header">
-          <span className="diff-title">
-            Agent 请求修改: <strong>{String(currentConf.args.path || currentConf.args.file_path || '')}</strong>
-          </span>
-          <span className="diff-tool">{currentConf.tool}</span>
+        <div className="diff-confirm-bar">
+          <div className="diff-confirm-header">
+            <span className="diff-confirm-icon">✎</span>
+            <span className="diff-confirm-title">
+              Agent 请求修改: <strong>{String(currentConf.args.path || currentConf.args.file_path || '')}</strong>
+            </span>
+            <span className="diff-confirm-tool">{currentConf.tool}</span>
+          </div>
+          {(addedCount > 0 || removedCount > 0) && (
+            <div className="diff-confirm-stats">
+              {addedCount > 0 && <span className="diff-stat-added">+{addedCount} 行新增</span>}
+              {removedCount > 0 && <span className="diff-stat-removed">-{removedCount} 行删除</span>}
+            </div>
+          )}
         </div>
       )}
 
@@ -114,7 +191,7 @@ export default function CodeViewer() {
           <Editor
             height="100%"
             language={activeData.language}
-            value={activeData.content}
+            value={displayValue}
             theme="vs-dark"
             onMount={(editor, monaco) => {
               editorRef.current = editor;
@@ -141,11 +218,11 @@ export default function CodeViewer() {
       {/* 确认按钮 */}
       {currentConf && (
         <div className="diff-actions">
-          <button className="btn-accept" onClick={handleAccept}>
-            接受修改
-          </button>
           <button className="btn-reject" onClick={handleReject}>
-            拒绝
+            ✕ 拒绝
+          </button>
+          <button className="btn-accept" onClick={handleAccept}>
+            ✓ 接受修改
           </button>
         </div>
       )}

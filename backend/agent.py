@@ -113,6 +113,7 @@ class CodingAgent:
         on_step: Optional[Callable] = None,
         on_confirm: Optional[Callable] = None,
         cancel_event: Optional[threading.Event] = None,
+        on_plan_update: Optional[Callable] = None,
     ):
         """
         Args:
@@ -121,6 +122,8 @@ class CodingAgent:
             on_confirm:  文件修改确认回调，接收 dict(tool, args, preview)，
                          返回 dict(approved: bool)。若为 None 则自动批准。
             cancel_event: 取消信号，外部通过 set() 通知 Agent 停止。
+            on_plan_update: 计划状态变更回调，在每个计划工具执行后立即触发，
+                            接收 plan_state dict，用于实时推送计划进度。
         """
         if not Config.validate():
             raise RuntimeError(
@@ -131,6 +134,7 @@ class CodingAgent:
         self.on_step = on_step
         self.on_confirm = on_confirm
         self.cancel_event = cancel_event
+        self.on_plan_update = on_plan_update
 
         # 计划状态（由 create_plan / update_step / finish_task 工具读写）
         self.plan_state: dict = {}
@@ -241,10 +245,21 @@ class CodingAgent:
                     # ---- 文件修改工具需要用户确认 ----
                     if tool_name in _FILE_MODIFY_TOOLS and self.on_confirm:
                         preview = self._build_confirm_preview(tool_name, tool_args)
+                        # 在工具执行前读取原始文件内容，供前端 diff 高亮使用
+                        _orig_content = ""
+                        _file_path = tool_args.get("path", "")
+                        if _file_path:
+                            try:
+                                _abs = _resolve_path(_file_path, self.working_dir)
+                                if _abs.exists() and _abs.is_file():
+                                    _orig_content = _abs.read_text(encoding="utf-8")
+                            except Exception:
+                                pass
                         decision = self.on_confirm({
                             "tool": tool_name,
                             "args": tool_args,
                             "preview": preview,
+                            "original_content": _orig_content,
                         })
                         if not decision.get("approved", False):
                             reason = decision.get("reason", "用户拒绝")
@@ -281,6 +296,11 @@ class CodingAgent:
                     # 检测 finish_task：模型主动结束任务
                     if tool_name == "finish_task":
                         finish_called = True
+
+                    # ---- 计划工具即时通知：每次计划工具执行后立即回调 ----
+                    if tool_name in ("create_plan", "update_step", "finish_task"):
+                        if self.on_plan_update:
+                            self.on_plan_update(dict(self.plan_state))
 
                 # 如果检测到重复调用，注入提醒消息
                 if nudge:

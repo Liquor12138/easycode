@@ -58,6 +58,7 @@ class Confirmation:
     tool: str
     args: dict
     preview: str
+    original_content: str = ""   # 修改前的原始文件内容，供前端 diff 高亮
     event: threading.Event = field(default_factory=threading.Event)
     approved: Optional[bool] = None
     reason: str = ""
@@ -92,6 +93,7 @@ def _create_confirmation(task: TaskState, request: dict) -> dict:
         tool=request["tool"],
         args=request["args"],
         preview=request["preview"],
+        original_content=request.get("original_content", ""),
     )
     task.confirmations.append(conf)
     task.status = "waiting_confirm"
@@ -111,6 +113,21 @@ def _run_agent_background(task: TaskState):
 
         # 计划状态跟踪（从工具调用/结果中提取）
         plan_data = {"title": "", "steps": []}
+
+        def _sync_plan_from_state(plan_state: dict):
+            """从 Agent 的 plan_state 同步计划进度到 task（即时触发）。"""
+            if not plan_state:
+                return
+            title = plan_state.get("title", "")
+            steps = plan_state.get("steps", [])
+            if title or steps:
+                plan_data["title"] = title
+                plan_data["steps"] = [
+                    {"index": s["index"], "description": s["description"],
+                     "status": s["status"], "result": s.get("result", "")}
+                    for s in steps
+                ]
+                task.plan = {"title": plan_data["title"], "steps": list(plan_data["steps"])}
 
         def on_step(step: StepLog):
             # 跟踪计划状态：检测 create_plan / update_step 工具调用
@@ -162,6 +179,7 @@ def _run_agent_background(task: TaskState):
             on_step=on_step,
             on_confirm=lambda req: _create_confirmation(task, req),
             cancel_event=task.cancel_event,
+            on_plan_update=_sync_plan_from_state,
         )
         result = agent.run(task.task_text)
 
@@ -307,9 +325,10 @@ def get_task(task_id: str):
     if task.status == "failed":
         resp["error"] = task.error
     if task.status == "waiting_confirm":
-        # 附带待确认信息
+        # 附带待确认信息（包含原始文件内容供前端 diff 高亮）
         pending = [
-            {"id": c.id, "tool": c.tool, "preview": c.preview, "args": c.args}
+            {"id": c.id, "tool": c.tool, "preview": c.preview,
+             "args": c.args, "original_content": c.original_content}
             for c in task.confirmations
             if not c.event.is_set()
         ]
@@ -329,7 +348,8 @@ def get_confirmations(task_id: str):
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
     pending = [
-        {"id": c.id, "tool": c.tool, "preview": c.preview, "args": c.args}
+        {"id": c.id, "tool": c.tool, "preview": c.preview,
+         "args": c.args, "original_content": c.original_content}
         for c in task.confirmations
         if not c.event.is_set()
     ]

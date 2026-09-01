@@ -24,7 +24,7 @@ class Config:
     MAX_ITERATIONS: int = int(os.getenv("MAX_ITERATIONS", "1000"))
     COMMAND_TIMEOUT: int = int(os.getenv("COMMAND_TIMEOUT", "30"))  # 秒
     MAX_FILE_SIZE: int = int(os.getenv("MAX_FILE_SIZE", str(1024 * 1024)))  # 1MB
-    COMPRESS_THRESHOLD: int = int(os.getenv("COMPRESS_THRESHOLD", "50"))  # 触发压缩的消息数
+    COMPRESS_THRESHOLD: int = int(os.getenv("COMPRESS_THRESHOLD", "15"))  # 触发压缩的消息数
     COMPRESS_COUNT: int = int(os.getenv("COMPRESS_COUNT", "5"))  # 每次压缩的消息数
 
     @classmethod

@@ -84,6 +84,7 @@ export interface ConfirmationInfo {
   tool: string;
   preview: string;
   args: Record<string, unknown>;
+  original_content?: string;
 }
 
 // ============================================================

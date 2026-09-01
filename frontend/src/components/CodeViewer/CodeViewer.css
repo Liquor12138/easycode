@@ -84,7 +84,7 @@
   overflow: hidden;
 }
 
-/* ---- 修改行高亮（红绿 diff） ---- */
+/* ---- 修改行高亮（红绿 diff，VSCode 风格） ---- */
 
 .diff-line-added {
   background: rgba(46, 160, 67, 0.15);
@@ -102,6 +102,99 @@
   background: rgba(248, 81, 73, 0.8);
   width: 3px !important;
   margin-left: 3px;
+}
+.diff-line-removed-text {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+/* ---- 确认信息栏 ---- */
+
+.diff-confirm-bar {
+  background: #252536;
+  border-bottom: 1px solid #333;
+  padding: 8px 12px;
+  flex-shrink: 0;
+}
+.diff-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #ccc;
+}
+.diff-confirm-icon {
+  font-size: 14px;
+  color: #fc6;
+}
+.diff-confirm-title strong {
+  color: #fff;
+}
+.diff-confirm-tool {
+  color: #888;
+  font-size: 11px;
+  background: #333;
+  padding: 2px 8px;
+  border-radius: 3px;
+  margin-left: auto;
+}
+.diff-confirm-stats {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.diff-stat-added {
+  color: #4caf50;
+  font-weight: 600;
+}
+.diff-stat-removed {
+  color: #f85149;
+  font-weight: 600;
+}
+
+/* ---- 删除行摘要 ---- */
+
+.diff-removed-summary {
+  background: #2a1a1a;
+  border-bottom: 1px solid #3a2020;
+  padding: 8px 12px;
+  flex-shrink: 0;
+}
+.diff-removed-title {
+  font-size: 11px;
+  color: #f85149;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.diff-removed-lines {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+}
+.diff-removed-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 1px 0;
+}
+.diff-removed-sign {
+  color: #f85149;
+  font-weight: 700;
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+}
+.diff-removed-text {
+  color: #d0a0a0;
+  white-space: pre;
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+.diff-removed-more {
+  font-size: 11px;
+  color: #888;
+  padding-top: 4px;
+  font-style: italic;
 }
 
 /* ---- Diff viewer ---- */
@@ -158,32 +251,37 @@
   gap: 8px;
   padding: 8px 12px;
   background: #252526;
+  border-top: 1px solid #333;
+  flex-shrink: 0;
 }
 
 .btn-accept {
-  padding: 6px 16px;
-  background: #0e7a0d;
+  padding: 6px 20px;
+  background: #238636;
   color: #fff;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
+  transition: background 0.15s;
 }
 .btn-accept:hover {
-  background: #0a5e0a;
+  background: #2ea043;
 }
 
 .btn-reject {
-  padding: 6px 16px;
-  background: #5c1a1a;
+  padding: 6px 20px;
+  background: #3a1a1a;
   color: #f99;
-  border: none;
-  border-radius: 4px;
+  border: 1px solid #5c2a2a;
+  border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
+  transition: background 0.15s;
 }
 .btn-reject:hover {
-  background: #7a2222;
+  background: #5c2222;
+  color: #fcc;
 }

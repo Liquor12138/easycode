@@ -36,8 +36,9 @@ interface AgentStore {
   terminalEntries: TerminalEntry[];
   terminalOpen: boolean;
 
-  // ---- diff 装饰 ----
-  diffDecorations: { line: number; type: 'added' | 'removed' }[];
+  // ---- diff 内联合视图 ----
+  diffDisplayContent: string;
+  diffClassifications: { type: 'added' | 'removed' | 'unchanged' }[];
 
   // ---- 错误 ----
   error: string | null;
@@ -66,7 +67,6 @@ interface AgentStore {
   toggleTerminal: () => void;
 
   clearError: () => void;
-  setDiffDecorations: (decorations: { line: number; type: 'added' | 'removed' }[]) => void;
 }
 
 // ============================================================
@@ -97,7 +97,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   terminalOpen: false,
   error: null,
   plan: null,
-  diffDecorations: [],
+  diffDisplayContent: '',
+  diffClassifications: [],
 
   // ============================================================
   // 初始化：仅检测后端连接，不加载文件树
@@ -155,9 +156,10 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       pendingConfirmations: [],
       terminalEntries: [],
       terminalOpen: false,
-      diffDecorations: [],
       error: null,
       plan: null,
+      diffDisplayContent: '',
+      diffClassifications: [],
     });
   },
 
@@ -204,7 +206,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     });
   },
 
-  setActiveFile: (path: string | null) => set({ activeFile: path, diffDecorations: [] }),
+  setActiveFile: (path: string | null) => set({ activeFile: path, diffDisplayContent: '', diffClassifications: [] }),
 
   // ============================================================
   // 计算行级 diff（LCS 算法）
@@ -299,39 +301,126 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             });
 
             // 自动打开被修改的文件并计算红绿 diff
-            const filePath = String(conf.args.path || conf.args.file_path || '');
-            if (filePath) {
-              await get().openFile(filePath);
-              const state = get();
-              const fileData = state.openFiles.get(filePath);
-              if (fileData) {
-                let originalContent: string;
-                let modifiedContent: string;
+            const rawPath = String(conf.args.path || conf.args.file_path || '');
+            if (rawPath) {
+              // 路径规范化：统一使用 / 分隔符，解决 Windows \ 与 LLM / 不匹配问题
+              const normalize = (p: string) => p.replace(/\\/g, '/');
+              const filePath = normalize(rawPath);
 
+              const state = get();
+              // 尝试匹配 openFiles 中的文件（先精确匹配，再规范化匹配）
+              let fileData = state.openFiles.get(filePath)
+                || state.openFiles.get(rawPath)
+                || (() => {
+                    for (const [k, v] of state.openFiles) {
+                      if (normalize(k) === filePath) return v;
+                    }
+                    return undefined;
+                  })();
+              // 找到匹配的实际 key（用于后续 set/get）
+              const matchedKey = fileData
+                ? (state.openFiles.has(filePath) ? filePath
+                  : state.openFiles.has(rawPath) ? rawPath
+                  : Array.from(state.openFiles.keys()).find(k => normalize(k) === filePath) || filePath)
+                : filePath;
+
+              // 语言推断
+              const ext = filePath.split('.').pop() || '';
+              const langMap: Record<string, string> = {
+                py: 'python', js: 'javascript', ts: 'typescript',
+                jsx: 'javascript', tsx: 'typescript', java: 'java',
+                c: 'c', cpp: 'cpp', html: 'html', css: 'css',
+                json: 'json', md: 'markdown', yaml: 'yaml', yml: 'yaml',
+              };
+              const language = langMap[ext] || 'plaintext';
+
+              // 后端在确认前读取的原始文件内容（最可靠的数据源）
+              const backendOriginal = conf.original_content
+                || (conf.args._original_content as string)
+                || '';
+
+              let originalContent: string;
+              let modifiedContent: string;
+              let isNewFile = false;
+              let updatedFilesMap: Map<string, { content: string; language: string }> | null = null;
+
+              if (fileData) {
+                // 文件已打开（存在于 openFiles 中）
+                originalContent = fileData.content;
                 if (conf.tool === 'search_replace') {
                   const oldText = (conf.args.old_text as string) || '';
                   const newText = (conf.args.new_text as string) || '';
-                  originalContent = fileData.content;
                   modifiedContent = originalContent.replace(oldText, newText);
                 } else {
-                  // write_file
-                  originalContent = fileData.content;
                   modifiedContent = (conf.args.content as string) || '';
-                  if (!originalContent && modifiedContent) {
-                    // 新文件：全部标记为新增
-                    const lines = modifiedContent.split('\n').length;
-                    const decorations = Array.from({ length: lines }, (_, i) => ({
-                      line: i + 1,
-                      type: 'added' as const,
-                    }));
-                    set({ diffDecorations: decorations });
-                    continue;
+                }
+              } else if (backendOriginal) {
+                // 文件未打开，但后端提供了原始内容（最可靠）
+                originalContent = backendOriginal;
+                if (conf.tool === 'search_replace') {
+                  const oldText = (conf.args.old_text as string) || '';
+                  const newText = (conf.args.new_text as string) || '';
+                  modifiedContent = originalContent.replace(oldText, newText);
+                } else {
+                  modifiedContent = (conf.args.content as string) || '';
+                }
+                // 将原始内容加入 openFiles，确保编辑器显示正确
+                updatedFilesMap = new Map(get().openFiles);
+                updatedFilesMap.set(filePath, { content: originalContent, language });
+              } else {
+                // 兜底：文件未打开且后端未提供原始内容，尝试多种策略加载
+                isNewFile = true;
+                originalContent = '';
+                modifiedContent = (conf.args.content as string) || '';
+
+                if (conf.tool === 'search_replace') {
+                  // 策略 1：直接用 LLM 提供的路径请求 API
+                  let loadedContent: string | null = null;
+                  let loadedPath = filePath;
+                  try {
+                    const file = await api.fetchFileContent(rawPath);
+                    loadedContent = file.content;
+                  } catch {
+                    // 策略 2：路径解析失败，在文件树中按文件名搜索正确路径
+                    const fileName = rawPath.split('/').pop()?.split('\\').pop() || rawPath;
+                    const treePath = findFileInTree(get().fileTree, fileName);
+                    if (treePath) {
+                      try {
+                        const file = await api.fetchFileContent(treePath);
+                        loadedContent = file.content;
+                        loadedPath = treePath.replace(/\\/g, '/');
+                      } catch {
+                        // 仍然失败，放弃
+                      }
+                    }
+                  }
+
+                  if (loadedContent !== null) {
+                    originalContent = loadedContent;
+                    const oldText = (conf.args.old_text as string) || '';
+                    const newText = (conf.args.new_text as string) || '';
+                    modifiedContent = originalContent.replace(oldText, newText);
+                    isNewFile = false;
+                    updatedFilesMap = new Map(get().openFiles);
+                    updatedFilesMap.set(loadedPath, { content: loadedContent, language });
                   }
                 }
 
-                const decorations = computeLineDiff(originalContent, modifiedContent);
-                set({ diffDecorations: decorations });
+                if (isNewFile) {
+                  updatedFilesMap = new Map(get().openFiles);
+                  updatedFilesMap.set(filePath, { content: modifiedContent, language });
+                }
               }
+
+              // 构建内联 diff 视图（GitHub unified diff 风格）
+              const diffResult = buildInlineDiff(originalContent, modifiedContent, conf.tool);
+              // 一次性更新所有相关状态，避免 openFiles 与 diff 状态不一致
+              set({
+                diffDisplayContent: diffResult.displayContent,
+                diffClassifications: diffResult.classifications,
+                openFiles: updatedFilesMap || get().openFiles,
+                activeFile: filePath,
+              });
             }
           }
           set({
@@ -415,11 +504,51 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   // 确认/拒绝文件修改
   // ============================================================
   confirmChange: async (confId: string, approved: boolean, reason = '') => {
-    const { taskId, pendingConfirmations, messages } = get();
+    const { taskId, pendingConfirmations, messages, openFiles } = get();
     if (!taskId) return;
 
     try {
       await api.respondConfirmation(taskId, confId, approved, reason);
+
+      // 批准时：同步更新 openFiles 中的文件内容为修改后版本
+      // 这样后续的 diff 计算才能基于正确的（已修改的）文件内容
+      let updatedOpenFiles = openFiles;
+      if (approved) {
+        const conf = pendingConfirmations.find((c) => c.id === confId);
+        if (conf) {
+          const rawPath = String(conf.args.path || conf.args.file_path || '');
+          const normalize = (p: string) => p.replace(/\\/g, '/');
+          const filePath = normalize(rawPath);
+          // 路径匹配：先精确匹配，再规范化匹配
+          let fileData = openFiles.get(filePath)
+            || openFiles.get(rawPath)
+            || (() => {
+                for (const [k, v] of openFiles) {
+                  if (normalize(k) === filePath) return v;
+                }
+                return undefined;
+              })();
+          const matchedKey = fileData
+            ? (openFiles.has(filePath) ? filePath
+              : openFiles.has(rawPath) ? rawPath
+              : Array.from(openFiles.keys()).find(k => normalize(k) === filePath) || filePath)
+            : filePath;
+          if (fileData) {
+            let newContent: string;
+            if (conf.tool === 'search_replace') {
+              const oldText = (conf.args.old_text as string) || '';
+              const newText = (conf.args.new_text as string) || '';
+              newContent = fileData.content.replace(oldText, newText);
+            } else if (conf.tool === 'write_file') {
+              newContent = (conf.args.content as string) || '';
+            } else {
+              newContent = fileData.content;
+            }
+            updatedOpenFiles = new Map(openFiles);
+            updatedOpenFiles.set(matchedKey, { ...fileData, content: newContent });
+          }
+        }
+      }
 
       // 更新消息状态
       const updatedMsgs = messages.map((m) => {
@@ -436,6 +565,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         messages: updatedMsgs,
         pendingConfirmations: newConfs,
         agentStatus: newConfs.length > 0 ? 'waiting_confirm' : 'running',
+        diffDisplayContent: '',
+        diffClassifications: [],
+        openFiles: updatedOpenFiles,
       });
     } catch (e: unknown) {
       set({ error: `确认操作失败: ${(e as Error).message}` });
@@ -473,20 +605,38 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
   clearError: () => set({ error: null }),
 
-  setDiffDecorations: (decorations) => set({ diffDecorations: decorations }),
+
 }));
 
 // ============================================================
-// LCS 行级 diff 算法
+// 文件树搜索：根据文件名在已加载的文件树中查找完整路径
 // ============================================================
 
-function computeLineDiff(originalContent: string, modifiedContent: string): { line: number; type: 'added' | 'removed' }[] {
+/** 在文件树中按文件名搜索，返回匹配的完整相对路径 */
+function findFileInTree(nodes: import('../types').FileNode[], fileName: string): string | null {
+  for (const node of nodes) {
+    if (node.type === 'file' && node.name === fileName) {
+      return node.path;
+    }
+    if (node.type === 'directory' && node.children) {
+      const found = findFileInTree(node.children, fileName);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// ============================================================
+// 内联 diff 构建（GitHub unified diff 风格）
+// ============================================================
+
+/** LCS 动态规划生成行级 diff 操作序列 */
+function computeLCSOps(originalContent: string, modifiedContent: string): { op: 'keep' | 'remove' | 'add'; line: string }[] {
   const origLines = originalContent.split('\n');
   const modLines = modifiedContent.split('\n');
   const m = origLines.length;
   const n = modLines.length;
 
-  // LCS 动态规划
   const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
@@ -496,19 +646,53 @@ function computeLineDiff(originalContent: string, modifiedContent: string): { li
     }
   }
 
-  // 回溯生成 diff
-  const result: { line: number; type: 'added' | 'removed' }[] = [];
+  // 回溯生成操作序列（逆序）
+  const ops: { op: 'keep' | 'remove' | 'add'; line: string }[] = [];
   let i = m, j = n;
   while (i > 0 || j > 0) {
     if (i > 0 && j > 0 && origLines[i - 1] === modLines[j - 1]) {
-      i--; j--; // 匹配行，跳过
+      ops.push({ op: 'keep', line: origLines[i - 1] });
+      i--; j--;
     } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      result.push({ line: j, type: 'added' });
+      ops.push({ op: 'add', line: modLines[j - 1] });
       j--;
     } else {
-      result.push({ line: i, type: 'removed' });
+      ops.push({ op: 'remove', line: origLines[i - 1] });
       i--;
     }
   }
-  return result.reverse();
+  return ops.reverse();
+}
+
+/**
+ * 构建内联 diff 视图：删除行和新增行交错排列在同一个内容中，
+ * 类似 GitHub unified diff 的展示效果。
+ */
+function buildInlineDiff(
+  originalContent: string,
+  modifiedContent: string,
+  tool: string,
+): { displayContent: string; classifications: { type: 'added' | 'removed' | 'unchanged' }[] } {
+  // 新文件：所有行都是新增
+  if (!originalContent) {
+    const lines = modifiedContent.split('\n');
+    return {
+      displayContent: modifiedContent,
+      classifications: lines.map(() => ({ type: 'added' as const })),
+    };
+  }
+
+  // 通用：使用 LCS 生成行级 diff，交错排列 removed 和 added
+  const ops = computeLCSOps(originalContent, modifiedContent);
+  const lines: string[] = [];
+  const classifications: { type: 'added' | 'removed' | 'unchanged' }[] = [];
+
+  for (const { op, line } of ops) {
+    lines.push(line);
+    classifications.push({
+      type: op === 'keep' ? 'unchanged' : op === 'add' ? 'added' : 'removed',
+    });
+  }
+
+  return { displayContent: lines.join('\n'), classifications };
 }
