@@ -19,9 +19,9 @@ from config import Config
 from tools import TOOL_SCHEMAS, execute_tool
 
 # 重复检测：连续 N 次调用相同工具（相同参数）时注入提醒
-_REPEAT_THRESHOLD = 5
+_REPEAT_THRESHOLD = 3
 # 重复检测：连续 N 次调用相同工具名（不论参数）时注入提醒
-_REPEAT_TOOL_THRESHOLD = 8
+_REPEAT_TOOL_THRESHOLD = 5
 
 
 # ============================================================
@@ -349,73 +349,135 @@ class CodingAgent:
 
     def _compress_history(self):
         """
-        上下文压缩：当消息数超过阈值时，将最早的若干条可压缩消息合并为一条 history 消息。
+        上下文压缩：当消息数超过 30 条时，将前 5 条可压缩消息发送给 LLM 总结为一条 history。
 
-        规则：
+        策略：
         - system 和 user 消息永不压缩
-        - history 消息默认不压缩，除非最早的可压缩消息全是 history
-        - 每次压缩 COMPRESS_COUNT 条消息
+        - 扫描消息队列前方（跳过 system/user）的前 5 条可压缩消息
+        - 如果前方有 >= 5 条 history → 压缩这 5 条 history
+        - 如果前方 history 不足 5 条 → 不压缩 history，改为压缩紧随其后的 5 条 assistant/tool 消息
+        - 压缩方式：发送给 LLM，让其总结这些消息完成了什么工作、有什么结果
         """
         if len(self.messages) <= Config.COMPRESS_THRESHOLD:
             return
 
-        n = Config.COMPRESS_COUNT
-
-        # 跳过 system 消息（始终保留在 index 0）
+        n = Config.COMPRESS_COUNT  # 5
         start = 1 if self.messages and self.messages[0]["role"] == "system" else 0
 
-        # 从 start 开始扫描，跳过 user 消息，收集前 n 条可压缩消息
+        # 收集前方连续的可压缩消息（非 system/user），并计算其中 history 数量
         compressible_indices = []
+        history_count = 0
         for i in range(start, len(self.messages)):
-            if self.messages[i]["role"] == "user":
-                continue
+            role = self.messages[i]["role"]
+            if role in ("system", "user"):
+                break  # 遇到不可压缩消息就停止，只处理最前面的连续块
             compressible_indices.append(i)
-            if len(compressible_indices) == n:
+            if role == "history":
+                history_count += 1
+            if len(compressible_indices) >= n:
                 break
 
-        # 不足 n 条可压缩消息，无需压缩
         if len(compressible_indices) < n:
+            # 前方连续可压缩消息不足 5 条，不压缩
             return
 
-        # 检查是否全是 history 消息
-        all_history = all(
-            self.messages[i]["role"] == "history" for i in compressible_indices
-        )
-        if not all_history:
-            return  # 含 assistant/tool 消息，暂不压缩
+        # 决定压缩目标
+        if history_count >= n:
+            # 前方有 >= 5 条 history，压缩前 5 条 history
+            target_indices = compressible_indices[:n]
+        else:
+            # 前方 history 不足 5 条，不压缩 history
+            # 改为找 history 后面的（或混合块中的）5 条 assistant/tool 消息
+            assistant_tool_indices = [
+                i for i in compressible_indices
+                if self.messages[i]["role"] in ("assistant", "tool")
+            ]
+            if len(assistant_tool_indices) < n:
+                # 不足 5 条 assistant/tool，不压缩
+                return
+            target_indices = assistant_tool_indices[:n]
 
-        # ---- 执行压缩 ----
-        compressible_msgs = [self.messages[i] for i in compressible_indices]
+        # ---- 构建发送给 LLM 的内容 ----
+        target_msgs = [self.messages[i] for i in target_indices]
+        summary_content = self._summarize_with_llm(target_msgs)
+        if not summary_content:
+            return  # LLM 总结失败，跳过本次压缩
 
-        # 构建压缩摘要
-        summary_parts = []
-        for msg in compressible_msgs:
-            content = msg.get("content", "")
-            if content:
-                summary_parts.append(content)
-
-        merged_content = "\n---\n".join(summary_parts)
         history_msg = {
             "role": "history",
-            "content": f"[历史压缩] 以下是之前已完成工作的记录摘要：\n\n{merged_content}",
+            "content": summary_content,
         }
 
-        # 重建消息列表：
-        # system + 原有 user 消息 + 压缩后的 history + 剩余消息
-        first_idx = compressible_indices[0]
-        last_idx = compressible_indices[-1]
+        # 重建消息列表：保留 target 之前的消息 + history 摘要 + target 之后的消息
+        first_idx = target_indices[0]
+        last_idx = target_indices[-1]
 
-        # 被压缩块之前的 user 消息（保留）
-        pre_user_msgs = [
-            self.messages[i] for i in range(start, first_idx)
-            if self.messages[i]["role"] == "user"
-        ]
+        before = self.messages[:first_idx]
+        after = self.messages[last_idx + 1:]
+        self.messages = before + [history_msg] + after
 
-        # 被压缩块之后的所有消息（保留）
-        remaining_msgs = [self.messages[i] for i in range(last_idx + 1, len(self.messages))]
+    def _summarize_with_llm(self, messages: list) -> str:
+        """
+        将一组消息发送给 LLM，让其总结这些消息完成了什么工作、有什么结果。
+        返回总结文本；失败时返回空字符串。
+        """
+        # 构建可读的消息摘要（截断过长内容以控制 token）
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "history":
+                if content:
+                    parts.append(f"[历史记录] {content[:500]}")
+            elif role == "assistant":
+                if content:
+                    parts.append(f"[助手] {content[:300]}")
+                for tc in msg.get("tool_calls", []):
+                    fn = tc.get("function", {})
+                    name = fn.get("name", "")
+                    args_str = fn.get("arguments", "")
+                    try:
+                        args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                        key_info = {k: str(v)[:100] for k, v in (args.items() if isinstance(args, dict) else [])}
+                        parts.append(f"[调用工具] {name}({key_info})")
+                    except (json.JSONDecodeError, AttributeError):
+                        parts.append(f"[调用工具] {name}")
+            elif role == "tool":
+                if content:
+                    parts.append(f"[工具结果] {content[:300]}")
+            else:
+                if content:
+                    parts.append(f"[{role}] {content[:300]}")
 
-        # 重建：system + pre_user + history + remaining
-        self.messages = [self.messages[0]] + pre_user_msgs + [history_msg] + remaining_msgs
+        if not parts:
+            return ""
+
+        text_to_summarize = "\n".join(parts)
+
+        try:
+            response = self.client.chat.completions.create(
+                model=Config.DEEPSEEK_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是一个对话历史压缩助手。你会收到一段编程智能体的对话记录片段，"
+                            "请用简洁的中文总结这些消息完成了什么工作、得到了什么关键结果、修改了哪些文件。"
+                            "总结控制在 200 字以内，不要包含代码细节。"
+                            "直接输出总结内容，不要加任何前缀或格式标记。"
+                        ),
+                    },
+                    {"role": "user", "content": text_to_summarize},
+                ],
+                max_tokens=300,
+            )
+            summary = response.choices[0].message.content.strip()
+            if summary:
+                return f"[LLM 总结] {summary}"
+        except Exception as e:
+            print(f"[压缩] LLM 总结失败: {e}")
+
+        return ""
 
     @staticmethod
     def _build_confirm_preview(tool_name: str, args: dict) -> str:
